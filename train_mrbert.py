@@ -73,8 +73,8 @@ def parse_args():
     parser.add_argument(
         "--delete_gate_layer",
         type=int,
-        default=2,
-        help="Which encoder layer to place the delete gate (0-indexed)",
+        default=3,  # MrT5 default
+        help="Which encoder layer to place the delete gate (0-indexed). MrT5 uses layer 3.",
     )
     parser.add_argument(
         "--deletion_type",
@@ -86,8 +86,14 @@ def parse_args():
     parser.add_argument(
         "--sigmoid_mask_scale",
         type=float,
-        default=-10.0,
+        default=-30.0,  # MrT5 default
         help="Scale for sigmoid mask (more negative = stronger deletion signal)",
+    )
+    parser.add_argument(
+        "--deletion_threshold",
+        type=float,
+        default=-15.0,  # MrT5 default (sigmoid_mask_scale / 2)
+        help="Threshold for counting a token as deleted (gate < threshold)",
     )
     
     # Dataset arguments
@@ -95,7 +101,7 @@ def parse_args():
         "--dataset_name",
         type=str,
         default="wikitext",
-        help="Dataset name from HuggingFace datasets",
+        help="Dataset name from HuggingFace datasets (or 'local_mc4' for local mC4)",
     )
     parser.add_argument(
         "--dataset_config",
@@ -104,9 +110,15 @@ def parse_args():
         help="Dataset configuration (optional)",
     )
     parser.add_argument(
+        "--local_mc4_dir",
+        type=str,
+        default="mrt5/lm_datasets",
+        help="Directory containing local mC4 preprocessed files (used when dataset_name='local_mc4')",
+    )
+    parser.add_argument(
         "--max_seq_length",
         type=int,
-        default=128,
+        default=512,
         help="Maximum sequence length",
     )
     parser.add_argument(
@@ -114,6 +126,12 @@ def parse_args():
         type=float,
         default=0.15,
         help="Probability of masking tokens for MLM",
+    )
+    parser.add_argument(
+        "--streaming",
+        action="store_true",
+        default=True,
+        help="Use streaming for large datasets (memory efficient)",
     )
     
     # Training arguments
@@ -172,18 +190,42 @@ def parse_args():
         help="Evaluate every N steps",
     )
     
-    # Delete gate loss arguments
+    # Delete gate loss arguments (PI-controller from MrT5 paper)
     parser.add_argument(
         "--deletion_loss_weight",
         type=float,
-        default=0.01,  # Reduced from 0.1 - too high causes 100% deletion
-        help="Weight for deletion regularization loss (MrT5 paper uses small values)",
+        default=0.0,  # Starting α_0 (PI-controller will adjust this)
+        help="Initial weight for deletion regularization loss (α_0 in MrT5 paper)",
     )
     parser.add_argument(
         "--target_deletion_rate",
         type=float,
-        default=0.3,
-        help="Target fraction of tokens to delete (for regularization)",
+        default=0.4,  # δ in MrT5 paper
+        help="Target fraction of tokens to delete (δ in MrT5 paper)",
+    )
+    parser.add_argument(
+        "--controller_p",
+        type=float,
+        default=0.5,  # k_p in MrT5 paper
+        help="Proportional gain for PI-controller (k_p in MrT5 paper)",
+    )
+    parser.add_argument(
+        "--controller_i",
+        type=float,
+        default=5e-5,  # k_i in MrT5 paper
+        help="Integral gain for PI-controller (k_i in MrT5 paper)",
+    )
+    parser.add_argument(
+        "--regularizer_delay",
+        type=int,
+        default=0,
+        help="Number of steps before applying delete gate regularizer",
+    )
+    parser.add_argument(
+        "--use_pi_controller",
+        action="store_true",
+        default=True,
+        help="Use PI-controller for deletion rate (recommended by MrT5 paper)",
     )
     
     # Other arguments
@@ -209,24 +251,87 @@ def parse_args():
     return parser.parse_args()
 
 
-def compute_deletion_loss(delete_gate_output, target_deletion_rate, sigmoid_mask_scale):
+class PIController:
     """
-    Compute auxiliary loss to encourage the model to delete tokens.
+    PI-controller for dynamically adjusting deletion loss coefficient.
+    
+    Adapted from MrT5 trainer.py (lines 262-266):
+    Uses exponential moving average for proportional term.
+    
+    α_t = p_acc + i_acc
+    where:
+      p_acc = 0.9 * p_acc + 0.1 * k_p * error
+      i_acc = i_acc + k_i * error
+      error = target_rate - actual_rate
+    """
+    
+    def __init__(self, target_rate: float, kp: float = 0.5, ki: float = 1e-5, alpha_0: float = 0.0):
+        self.target_rate = target_rate
+        self.kp = kp
+        self.ki = ki
+        self.p_acc = 0.0  # Proportional accumulator (with EMA)
+        self.i_acc = 0.0  # Integral accumulator
+    
+    def update(self, actual_rate: float) -> float:
+        """
+        Update the controller and return the new deletion loss coefficient (α).
+        
+        Args:
+            actual_rate: Current deletion rate (0 to 1, as percentage/100)
+            
+        Returns:
+            α: Updated deletion loss coefficient
+        """
+        # Error: how much more we want to delete
+        error = self.target_rate - actual_rate
+        
+        # Update accumulators (from MrT5 trainer.py)
+        self.p_acc = 0.9 * self.p_acc + 0.1 * self.kp * error
+        self.i_acc = self.i_acc + self.ki * error
+        
+        # PI control law
+        alpha = max(0.0, self.p_acc + self.i_acc)
+        
+        return alpha
+
+
+def compute_deletion_loss(delete_gate_output, input_ids, deletion_threshold, sigmoid_mask_scale, pad_token_id=0):
+    """
+    Compute the deletion regularization loss.
+    
+    Adapted from MrT5 trainer.py __compute_loss method.
+    
+    Returns:
+        deletion_loss: The gate mean loss (to encourage deletion)
+        percent_deleted: Percentage of non-pad tokens deleted (0-100)
     """
     if delete_gate_output is None:
-        return torch.tensor(0.0)
+        return torch.tensor(0.0), 0.0
     
-    # Convert gate values to deletion probabilities
-    deletion_probs = -delete_gate_output.squeeze(-1) / sigmoid_mask_scale
-    deletion_probs = deletion_probs.clamp(0, 1)
+    delete_gate_output = delete_gate_output.squeeze(-1)
     
-    # Compute actual deletion rate
-    actual_deletion_rate = deletion_probs.mean()
+    # Create mask to exclude PAD tokens (from MrT5 trainer.py line 286)
+    non_pad_mask = input_ids != pad_token_id
     
-    # L2 loss to push toward target rate
-    deletion_loss = (actual_deletion_rate - target_deletion_rate) ** 2
+    # Compute delete gate loss: mean of gate values for non-pad tokens
+    # This encourages deletion (more negative = more deletion)
+    # From MrT5 trainer.py line 290: delete_gate_loss = delete_gate_output[non_pad_mask].mean()
+    if non_pad_mask.any():
+        deletion_loss = delete_gate_output[non_pad_mask].mean()
+    else:
+        deletion_loss = delete_gate_output.mean()
     
-    return deletion_loss
+    # Count deleted tokens (where gate < threshold)
+    # From MrT5 trainer.py lines 323-328
+    num_non_pad_tokens = non_pad_mask.sum()
+    num_deleted = ((delete_gate_output < deletion_threshold) & non_pad_mask).sum()
+    
+    if num_non_pad_tokens > 0:
+        percent_deleted = (num_deleted / num_non_pad_tokens * 100).item()
+    else:
+        percent_deleted = 0.0
+    
+    return deletion_loss, percent_deleted
 
 
 # =============================================================================
@@ -235,6 +340,47 @@ def compute_deletion_loss(delete_gate_output, target_deletion_rate, sigmoid_mask
 
 def prepare_mlm_dataset(args, tokenizer):
     """Prepare dataset for Masked Language Modeling."""
+    
+    # Check if using local mC4 dataset
+    if args.dataset_name == "local_mc4":
+        print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir}")
+        from mc4_dataset import load_mc4_dataset
+        
+        train_dataset = load_mc4_dataset(
+            split="train",
+            tokenizer=tokenizer,
+            max_length=args.max_seq_length,
+            mlm_probability=args.mlm_probability,
+            streaming=args.streaming,
+            data_dir=args.local_mc4_dir,
+        )
+        
+        eval_dataset = load_mc4_dataset(
+            split="validation",
+            tokenizer=tokenizer,
+            max_length=args.max_seq_length,
+            mlm_probability=args.mlm_probability,
+            streaming=False,  # Don't stream validation
+            max_samples=1000,  # Limit validation size
+            data_dir=args.local_mc4_dir,
+        )
+        
+        # Return dict-like structure for compatibility
+        class DatasetDict:
+            def __init__(self, train, validation):
+                self._train = train
+                self._validation = validation
+            def __getitem__(self, key):
+                if key == "train":
+                    return self._train
+                elif key in ["validation", "test"]:
+                    return self._validation
+                raise KeyError(key)
+        
+        # No data collator needed - dataset already applies MLM
+        return DatasetDict(train_dataset, eval_dataset), None
+    
+    # Standard HuggingFace dataset loading
     print(f"Loading MLM dataset: {args.dataset_name}/{args.dataset_config}")
     
     if args.dataset_config:
@@ -547,7 +693,19 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
     
     print(f"\nTotal training steps: {total_steps}")
     print(f"Warmup steps: {args.warmup_steps}")
+    print(f"Target deletion rate: {args.target_deletion_rate:.1%}")
+    if args.use_pi_controller:
+        print(f"Using PI-controller: k_p={args.controller_p}, k_i={args.controller_i}")
     print()
+    
+    # Initialize PI-controller for deletion rate targeting
+    pi_controller = PIController(
+        target_rate=args.target_deletion_rate,
+        kp=args.controller_p,
+        ki=args.controller_i,
+        alpha_0=args.deletion_loss_weight,
+    )
+    current_alpha = args.deletion_loss_weight  # Current deletion loss coefficient
     
     # Training loop
     model.train()
@@ -555,6 +713,7 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
     total_loss = 0
     total_task_loss = 0
     total_deletion_loss = 0
+    total_deletion_rate = 0
     
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -573,19 +732,38 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
             # Forward pass
             outputs = model(**batch)
             
-            # Task loss
+            # Task loss (cross-entropy)
             task_loss = outputs.loss
             
-            # Deletion regularization loss
+            # Get input_ids for deletion loss calculation
+            input_ids = batch.get('input_ids')
+            
+            # Deletion regularization loss with PI-controller
             delete_gate_output = getattr(outputs, 'delete_gate_output', None)
-            deletion_loss = compute_deletion_loss(
+            deletion_loss, percent_deleted = compute_deletion_loss(
                 delete_gate_output,
-                args.target_deletion_rate,
-                args.sigmoid_mask_scale,
+                input_ids,
+                deletion_threshold=args.deletion_threshold,
+                sigmoid_mask_scale=args.sigmoid_mask_scale,
+                pad_token_id=tokenizer.pad_token_id,
             )
             
-            # Combined loss
-            loss = task_loss + args.deletion_loss_weight * deletion_loss
+            # Convert percentage to rate (0-1) for PI-controller
+            actual_del_rate = percent_deleted / 100.0
+            
+            # Update PI-controller to get current α (only after regularizer_delay)
+            if args.use_pi_controller and global_step >= args.regularizer_delay:
+                current_alpha = pi_controller.update(actual_del_rate)
+            
+            # Combined loss: task_loss + α * deletion_loss
+            # Apply regularizer only after delay (from MrT5 trainer.py lines 330-337)
+            if global_step >= args.regularizer_delay:
+                loss = task_loss + current_alpha * deletion_loss
+            else:
+                loss = task_loss
+            
+            # Track deletion rate for logging
+            total_deletion_rate += percent_deleted
             
             # Backward pass
             loss.backward()
@@ -615,23 +793,18 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
                 avg_loss = total_loss / args.logging_steps
                 avg_task_loss = total_task_loss / args.logging_steps
                 avg_deletion_loss = total_deletion_loss / args.logging_steps
-                
-                # Calculate actual deletion rate
-                if delete_gate_output is not None:
-                    deletion_probs = -delete_gate_output.squeeze(-1) / args.sigmoid_mask_scale
-                    deletion_probs = deletion_probs.clamp(0, 1)
-                    actual_del_rate = deletion_probs.mean().item()
-                else:
-                    actual_del_rate = 0.0
+                avg_del_pct = total_deletion_rate / args.logging_steps  # Percentage (0-100)
                 
                 print(f"\nStep {global_step}:")
                 print(f"  Loss: {avg_loss:.4f} (Task: {avg_task_loss:.4f}, Del: {avg_deletion_loss:.4f})")
-                print(f"  Deletion rate: {actual_del_rate:.2%} (target: {args.target_deletion_rate:.2%})")
+                print(f"  Deleted tokens: {avg_del_pct:.1f}% (target: {args.target_deletion_rate*100:.1f}%)")
+                print(f"  α (deletion coeff): {current_alpha:.6f}")
                 print(f"  LR: {scheduler.get_last_lr()[0]:.2e}")
                 
                 total_loss = 0
                 total_task_loss = 0
                 total_deletion_loss = 0
+                total_deletion_rate = 0
             
             # Save checkpoint
             if global_step % args.save_steps == 0:
@@ -701,21 +874,39 @@ def main():
     print(f"Trainable parameters: {trainable_params:,}")
     
     # Create dataloaders
+    # Handle both regular datasets and iterable datasets (for local_mc4)
+    from torch.utils.data import IterableDataset
+    
+    train_dataset = tokenized_dataset["train"]
+    is_iterable = isinstance(train_dataset, IterableDataset)
+    
+    # Custom collate function for when data_collator is None
+    def default_collate(batch):
+        return {
+            key: torch.stack([item[key] for item in batch])
+            for key in batch[0].keys()
+        }
+    
+    collate_fn = data_collator if data_collator is not None else default_collate
+    
     train_dataloader = DataLoader(
-        tokenized_dataset["train"],
+        train_dataset,
         batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=data_collator,
+        shuffle=not is_iterable,  # Can't shuffle iterable datasets
+        collate_fn=collate_fn,
     )
     
     eval_dataloader = None
-    if "validation" in tokenized_dataset:
+    try:
+        eval_dataset = tokenized_dataset["validation"]
         eval_dataloader = DataLoader(
-            tokenized_dataset["validation"],
+            eval_dataset,
             batch_size=args.batch_size,
             shuffle=False,
-            collate_fn=data_collator,
+            collate_fn=collate_fn,
         )
+    except (KeyError, TypeError):
+        pass  # No validation set
     
     # Train
     model = train(args, model, train_dataloader, eval_dataloader, tokenizer)

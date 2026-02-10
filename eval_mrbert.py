@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument(
         "--delete_gate_layer",
         type=int,
-        default=2,
+        default=3,  # MrT5 default
         help="Delete gate layer (only used with --from_pretrained)",
     )
     parser.add_argument(
@@ -67,13 +67,19 @@ def parse_args():
         "--dataset_name",
         type=str,
         default="wikitext",
-        help="Dataset name",
+        help="Dataset name (use 'local_mc4' for preprocessed mC4)",
     )
     parser.add_argument(
         "--dataset_config",
         type=str,
         default="wikitext-2-raw-v1",
         help="Dataset config",
+    )
+    parser.add_argument(
+        "--local_mc4_dir",
+        type=str,
+        default="mrt5/lm_datasets",
+        help="Directory for local mC4 data (used when dataset_name='local_mc4')",
     )
     parser.add_argument(
         "--split",
@@ -158,7 +164,8 @@ def load_model(args, tokenizer):
             args.from_pretrained,
             deletion_type=args.deletion_type,
             delete_gate_layer=args.delete_gate_layer,
-            sigmoid_mask_scale=-10.0,
+            sigmoid_mask_scale=-30.0,  # MrT5 default
+            deletion_threshold=-15.0,  # MrT5 default
         )
         model = MrBertForMaskedLM(config)
     
@@ -167,6 +174,23 @@ def load_model(args, tokenizer):
 
 def prepare_dataset(args, tokenizer):
     """Load and prepare evaluation dataset."""
+    
+    # Handle local mC4 dataset
+    if args.dataset_name == "local_mc4":
+        print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir} ({args.split})")
+        from mc4_dataset import load_mc4_dataset
+        
+        dataset = load_mc4_dataset(
+            split=args.split,
+            tokenizer=tokenizer,
+            max_length=args.max_seq_length,
+            max_samples=args.max_samples if args.max_samples > 0 else None,
+            streaming=False,
+            data_dir=args.local_mc4_dir,
+        )
+        return dataset
+    
+    # Standard HuggingFace dataset
     print(f"Loading dataset: {args.dataset_name}/{args.dataset_config} ({args.split})")
     
     dataset = load_dataset(args.dataset_name, args.dataset_config, split=args.split)
@@ -476,11 +500,17 @@ def main():
     # Prepare dataset
     dataset = prepare_dataset(args, tokenizer)
     
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer,
-        mlm=True,
-        mlm_probability=args.mlm_probability,
-    )
+    # For local_mc4, the dataset already has MLM labels, use DefaultDataCollator
+    # For HuggingFace datasets, use DataCollatorForLanguageModeling to create masks
+    if args.dataset_name == "local_mc4":
+        from transformers import DefaultDataCollator
+        data_collator = DefaultDataCollator()
+    else:
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tokenizer,
+            mlm=True,
+            mlm_probability=args.mlm_probability,
+        )
     
     dataloader = DataLoader(
         dataset,
