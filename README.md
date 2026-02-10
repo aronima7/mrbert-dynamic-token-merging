@@ -3,7 +3,7 @@
 **Author:** Hiva Mohammadzadeh  
 **Course:** CS224N - Natural Language Processing with Deep Learning
 
-This repository contains an implementation of **MrBERT**, which adapts the delete gate mechanism from the [MrT5 paper](https://arxiv.org/abs/2304.04128) to the BERT architecture. The delete gate learns to selectively remove uninformative tokens during encoding, potentially improving computational efficiency while maintaining (or improving) task performance.
+This repository contains an implementation of **MrBERT**, which adapts the delete gate mechanism from the [MrT5 paper](https://arxiv.org/pdf/2410.20771) to the BERT architecture. The delete gate learns to selectively remove uninformative tokens during encoding, potentially improving computational efficiency while maintaining (or improving) task performance.
 
 ---
 
