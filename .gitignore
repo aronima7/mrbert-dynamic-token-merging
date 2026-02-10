@@ -1,2 +1,4 @@
 .history/*
 __pycache__/*
+mrbert_checkpoints/*
+mrt5/lm_datasets/*
