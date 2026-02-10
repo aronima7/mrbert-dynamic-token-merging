@@ -11,7 +11,7 @@ from datasets import Dataset, IterableDataset
 import time
 
 # Change this path name to the path of the project
-BASE_PATH = "/nlp/scr3/nlp/llms-in-llms/mrt5"
+BASE_PATH = "/Users/hivamoh/Desktop/CS224N/project/CS224N-project/mrt5"
 CHECKPOINT_PATH = f"{BASE_PATH}/models"
 LM_DATASET_PATH = f"{BASE_PATH}/lm_datasets"
 DIAGNOSTIC_DATASET_PATH = f"{BASE_PATH}/diagnostic_datasets"
