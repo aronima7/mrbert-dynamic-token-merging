@@ -72,6 +72,18 @@ def parse_args():
         help="Dataset configuration (optional)",
     )
     parser.add_argument(
+        "--local_mc4_dir",
+        type=str,
+        default=None,
+        help="Path to local mC4 dataset directory (for local_mc4 dataset)",
+    )
+    parser.add_argument(
+        "--max_samples",
+        type=int,
+        default=-1,
+        help="Maximum number of samples to use (-1 for all)",
+    )
+    parser.add_argument(
         "--max_seq_length",
         type=int,
         default=128,
@@ -148,6 +160,33 @@ def parse_args():
 
 def load_mlm_dataset(args, tokenizer):
     """Load and preprocess MLM dataset."""
+    
+    # Handle local mC4 dataset
+    if args.dataset_name == "local_mc4":
+        from mc4_dataset import load_mc4_dataset
+        
+        print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir}")
+        
+        max_samples = args.max_samples if args.max_samples > 0 else None
+        train_dataset = load_mc4_dataset(
+            split="train",
+            tokenizer=tokenizer,
+            max_length=args.max_seq_length,
+            data_dir=args.local_mc4_dir,
+            max_samples=max_samples,
+            streaming=False
+        )
+        val_dataset = load_mc4_dataset(
+            split="validation",
+            tokenizer=tokenizer,
+            max_length=args.max_seq_length,
+            data_dir=args.local_mc4_dir,
+            max_samples=args.num_eval_samples if args.num_eval_samples > 0 else max_samples,
+            streaming=False
+        )
+        
+        return {"train": train_dataset, "validation": val_dataset}
+    
     print(f"Loading dataset: {args.dataset_name}/{args.dataset_config}")
     
     if args.dataset_config:
@@ -172,6 +211,13 @@ def load_mlm_dataset(args, tokenizer):
         batched=True,
         remove_columns=dataset["train"].column_names,
     )
+    
+    # Apply max_samples limit if specified
+    if args.max_samples > 0:
+        if "train" in tokenized_dataset:
+            tokenized_dataset["train"] = tokenized_dataset["train"].select(range(min(args.max_samples, len(tokenized_dataset["train"]))))
+        if "validation" in tokenized_dataset:
+            tokenized_dataset["validation"] = tokenized_dataset["validation"].select(range(min(args.max_samples, len(tokenized_dataset["validation"]))))
     
     return tokenized_dataset
 
@@ -366,11 +412,16 @@ def main():
         model = BertForMaskedLM.from_pretrained(args.model_name)
         dataset = load_mlm_dataset(args, tokenizer)
         
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=tokenizer,
-            mlm=True,
-            mlm_probability=args.mlm_probability,
-        )
+        # For local_mc4, the dataset already has MLM labels, use DefaultDataCollator
+        # For HuggingFace datasets, use DataCollatorForLanguageModeling to create masks
+        if args.dataset_name == "local_mc4":
+            data_collator = DefaultDataCollator()
+        else:
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=tokenizer,
+                mlm=True,
+                mlm_probability=args.mlm_probability,
+            )
         
         evaluate_fn = evaluate_mlm
         
@@ -399,10 +450,14 @@ def main():
     
     model = model.to(args.device)
     
+    # Check if this is a local_mc4 dataset (PyTorch Dataset) or HuggingFace DatasetDict
+    is_pytorch_dataset = args.dataset_name == "local_mc4"
+    
     # Create dataloaders
     if "train" in dataset:
         train_dataset = dataset["train"]
-        if args.num_eval_samples > 0 and len(train_dataset) > args.num_eval_samples:
+        # Only use .select() for HuggingFace datasets
+        if not is_pytorch_dataset and args.num_eval_samples > 0 and len(train_dataset) > args.num_eval_samples:
             train_dataset = train_dataset.select(range(min(len(train_dataset), 10000)))
     
     if "validation" in dataset:
@@ -412,7 +467,8 @@ def main():
     else:
         eval_dataset = dataset["train"]
     
-    if args.num_eval_samples > 0:
+    # Only use .select() for HuggingFace datasets
+    if not is_pytorch_dataset and args.num_eval_samples > 0:
         eval_dataset = eval_dataset.select(range(min(len(eval_dataset), args.num_eval_samples)))
     
     train_dataloader = DataLoader(

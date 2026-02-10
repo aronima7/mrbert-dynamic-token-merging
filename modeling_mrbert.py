@@ -234,16 +234,18 @@ class SigmoidDeleteGate(nn.Module):
         return gate_values, delete_gate_logits
 
     def _init_weights(self, m: nn.Module, init_func: str = "xavier_uniform_"):
-        """Initialize weights. Bias is set to 5 to strongly bias toward keeping tokens initially.
+        """Initialize weights. Bias is set high to strongly bias toward keeping tokens initially.
         
-        With ScaledSigmoid(-10) and bias=5:
-        gate_value = -10 * sigmoid(-5) ≈ -10 * 0.0067 ≈ -0.067 (close to 0 = keep)
+        With ScaledSigmoid(-30) and bias=10:
+        gate_value = -30 * sigmoid(-10) ≈ -30 * 0.000045 ≈ -0.00135 (very close to 0 = keep)
         
+        With deletion_threshold = -15, gate_value > -15 means KEEP the token.
         The model must learn to delete tokens, not start by deleting them.
         """
         if isinstance(m, nn.Linear):
-            TORCH_INIT_FUNCTIONS[init_func](m.weight)
-            m.bias.data.fill_(5)  # Increased from 1 to strongly bias toward keeping
+            # Use small weights to avoid large negative outputs
+            nn.init.normal_(m.weight, mean=0.0, std=0.01)
+            m.bias.data.fill_(10)  # Large positive bias to ensure tokens are kept initially
 
 
 class LogSigmoidDeleteGate(SigmoidDeleteGate):
@@ -571,9 +573,9 @@ class MrBertLayer(nn.Module):
             delete_gate_values, delete_gate_logits = self.delete_gate(hidden_states, input_ids)
             delete_gate_mask = delete_gate_values
             
-            # Check if all tokens would be deleted
+            # Check if all tokens would be deleted (gate_values < threshold means delete)
             threshold = deletion_threshold if deletion_threshold is not None else self.deletion_threshold
-            if threshold is not None and (delete_gate_values >= threshold).all():
+            if threshold is not None and hard_delete and (delete_gate_values < threshold).all():
                 raise ValueError(
                     "All tokens would be deleted. Adjust deletion_threshold or sigmoid_mask_scale."
                 )
@@ -743,8 +745,32 @@ class MrBertModel(BertPreTrainedModel):
         self.encoder = MrBertEncoder(config)
         self.pooler = BertPooler(config) if add_pooling_layer else None
         
-        # Initialize weights
+        # Initialize weights (this will call _init_weights on all modules)
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init() to ensure correct initialization
+        self._init_delete_gates()
+
+    def _init_delete_gates(self):
+        """Initialize delete gate weights to strongly favor keeping tokens.
+        
+        This must be called AFTER post_init() because post_init() overwrites
+        all module weights with the standard BERT initialization.
+        """
+        found_gate = False
+        for i, layer in enumerate(self.encoder.layer):
+            if layer.has_delete_gate:
+                gate = layer.delete_gate
+                if hasattr(gate, 'feed_forward'):
+                    # Initialize with small weights and large positive bias
+                    # This ensures initial gate values are close to 0 (keep tokens)
+                    nn.init.normal_(gate.feed_forward.weight, mean=0.0, std=0.001)
+                    gate.feed_forward.bias.data.fill_(10.0)
+                    found_gate = True
+                    print(f"[MrBERT] Initialized delete gate at layer {i} with bias=10.0, weight_std=0.001")
+        
+        if not found_gate:
+            print(f"[MrBERT] WARNING: No delete gate found! delete_gate_layer={self.config.delete_gate_layer}")
 
     def get_input_embeddings(self):
         return self.embeddings.word_embeddings
@@ -870,6 +896,9 @@ class MrBertForMaskedLM(BertPreTrainedModel):
         
         # Initialize weights
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init()
+        self.bert._init_delete_gates()
 
     def get_output_embeddings(self):
         return self.cls.predictions.decoder
@@ -956,6 +985,9 @@ class MrBertForSequenceClassification(BertPreTrainedModel):
         
         # Initialize weights
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init()
+        self.bert._init_delete_gates()
 
     def forward(
         self,
@@ -1055,6 +1087,9 @@ class MrBertForTokenClassification(BertPreTrainedModel):
         
         # Initialize weights
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init()
+        self.bert._init_delete_gates()
 
     def forward(
         self,
@@ -1129,6 +1164,9 @@ class MrBertForQuestionAnswering(BertPreTrainedModel):
         
         # Initialize weights
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init()
+        self.bert._init_delete_gates()
 
     def forward(
         self,
@@ -1221,6 +1259,9 @@ class MrBertForMultipleChoice(BertPreTrainedModel):
         
         # Initialize weights
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init()
+        self.bert._init_delete_gates()
 
     def forward(
         self,
@@ -1305,6 +1346,9 @@ class MrBertForNextSentencePrediction(BertPreTrainedModel):
         
         # Initialize weights
         self.post_init()
+        
+        # CRITICAL: Re-initialize delete gate AFTER post_init()
+        self.bert._init_delete_gates()
 
     def forward(
         self,

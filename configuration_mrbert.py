@@ -12,18 +12,19 @@ class MrBertConfig(BertConfig):
     selectively remove tokens during encoding to improve efficiency.
     
     Args:
-        sigmoid_mask_scale (`float`, *optional*, defaults to -10.0):
+        sigmoid_mask_scale (`float`, *optional*, defaults to -30.0):
             Scale factor for the sigmoid activation in the delete gate.
             More negative values lead to stronger deletion signals.
+            MrT5 paper uses -30.0.
         gate_layer_norm (`bool`, *optional*, defaults to True):
             Whether to apply layer normalization before the delete gate.
-        deletion_threshold (`float`, *optional*, defaults to None):
-            Threshold for hard deletion. Tokens with gate values below this
-            threshold are removed from the sequence. If None, soft deletion
-            is used (masking attention scores instead of removing tokens).
-        delete_gate_layer (`int`, *optional*, defaults to 2):
+        deletion_threshold (`float`, *optional*, defaults to -15.0):
+            Threshold for counting a token as deleted. Tokens with gate values 
+            below this threshold are considered deleted for metrics.
+            MrT5 paper uses sigmoid_mask_scale / 2 = -15.0.
+        delete_gate_layer (`int`, *optional*, defaults to 3):
             The encoder layer index where the delete gate is applied.
-            Layer indexing starts at 0.
+            Layer indexing starts at 0. MrT5 paper uses layer 3.
         use_softmax1 (`bool`, *optional*, defaults to False):
             Whether to use the softmax1 variant (softmax with n+1 denominator)
             for attention score normalization.
@@ -46,10 +47,10 @@ class MrBertConfig(BertConfig):
     
     def __init__(
         self,
-        sigmoid_mask_scale: float = -10.0,
+        sigmoid_mask_scale: float = -30.0,  # MrT5 default
         gate_layer_norm: bool = True,
-        deletion_threshold: float = None,
-        delete_gate_layer: int = 2,
+        deletion_threshold: float = -15.0,  # MrT5 default (sigmoid_mask_scale / 2)
+        delete_gate_layer: int = 3,  # MrT5 default (layer 3, 0-indexed)
         use_softmax1: bool = False,
         deletion_type: str = "scaled_sigmoid",
         random_deletion_probability: float = 0.5,
