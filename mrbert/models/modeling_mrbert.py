@@ -575,7 +575,7 @@ class MrBertLayer(nn.Module):
             
             # Check if all tokens would be deleted (gate_values < threshold means delete)
             threshold = deletion_threshold if deletion_threshold is not None else self.deletion_threshold
-            if threshold is not None and hard_delete and (delete_gate_values < threshold).all():
+            if threshold is not None and (delete_gate_values < threshold).all():
                 raise ValueError(
                     "All tokens would be deleted. Adjust deletion_threshold or sigmoid_mask_scale."
                 )
@@ -611,11 +611,16 @@ class MrBertLayer(nn.Module):
         )
         
         outputs = (layer_output,) + attention_outputs[1:]
-        
-        # Add delete gate outputs if present
+
+        # Add delete gate outputs if present.
+        # When has_delete_gate=True the tuple always ends with these 4 items (in order):
+        #   [-4] delete_gate_values   — gate scores (batch, seq, 1)
+        #   [-3] delete_gate_logits   — pre-activation logits (batch, seq, 1)
+        #   [-2] delete_gate_mask     — same as delete_gate_values, used as attention bias
+        #   [-1] new_attention_mask   — updated mask after hard deletion (or original if soft)
         if self.has_delete_gate:
             outputs = outputs + (delete_gate_values, delete_gate_logits, delete_gate_mask, new_attention_mask)
-        
+
         return outputs
 
     def feed_forward_chunk(self, attention_output: torch.Tensor) -> torch.Tensor:
@@ -698,10 +703,13 @@ class MrBertEncoder(nn.Module):
                 )
             
             hidden_states = layer_outputs[0]
-            
-            # Update delete gate info if this layer has a gate
+
+            # Update delete gate info if this layer has a gate.
+            # Gate outputs are always the last 4 items — see MrBertLayer.forward() for layout.
             if layer_module.has_delete_gate:
-                delete_gate_output, delete_gate_logits, delete_gate_mask, new_attention_mask = layer_outputs[-4:]
+                delete_gate_output, delete_gate_logits, delete_gate_mask, new_attention_mask = (
+                    layer_outputs[-4], layer_outputs[-3], layer_outputs[-2], layer_outputs[-1]
+                )
                 if hard_delete:
                     attention_mask = new_attention_mask
                     final_attention_mask = attention_mask

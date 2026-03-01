@@ -1,6 +1,7 @@
 # utils.py
 # Author: Julie Kallini
 
+import os
 import torch
 import json
 from models.modeling_t5 import T5ForConditionalGeneration, T5Config
@@ -10,8 +11,8 @@ from models.modeling_canine import CanineT5ForConditionalGeneration
 from datasets import Dataset, IterableDataset
 import time
 
-# Change this path name to the path of the project
-BASE_PATH = "/Users/hivamoh/Desktop/CS224N/project/CS224N-project/mrt5"
+# Change this path name to the path of the project, or set MRT5_BASE_PATH env var
+BASE_PATH = os.environ.get("MRT5_BASE_PATH", "/Users/aronimadass/Desktop/projects/stanford/CS224N-project/mrt5")
 CHECKPOINT_PATH = f"{BASE_PATH}/models"
 LM_DATASET_PATH = f"{BASE_PATH}/lm_datasets"
 DIAGNOSTIC_DATASET_PATH = f"{BASE_PATH}/diagnostic_datasets"

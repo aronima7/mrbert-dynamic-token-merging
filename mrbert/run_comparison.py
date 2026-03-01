@@ -35,8 +35,8 @@ from transformers import (
 from datasets import load_dataset
 from tqdm import tqdm
 
-from configuration_mrbert import MrBertConfig
-from modeling_mrbert import MrBertForMaskedLM, MrBertForSequenceClassification
+from mrbert.models.configuration_mrbert import MrBertConfig
+from mrbert.models.modeling_mrbert import MrBertForMaskedLM, MrBertForSequenceClassification
 
 
 def parse_args():

@@ -113,7 +113,7 @@ if __name__ == "__main__":
             input_ids, labels = get_input_ids_and_labels(batch)
             
             # Compute the loss
-            loss, percent_deleted_tokens, new_seq_len, seq_accuracy, token_accuracy = \
+            loss, percent_deleted_tokens, new_seq_len, seq_accuracy, token_accuracy, _ = \
                 metrics_function(model, input_ids, labels)
 
             # Update the total metrics

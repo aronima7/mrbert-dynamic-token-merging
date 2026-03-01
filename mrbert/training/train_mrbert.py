@@ -25,6 +25,12 @@ For a quick test run:
     python train_mrbert.py --max_steps 100 --logging_steps 10
 """
 
+import sys
+import os
+# Allow running from any directory by adding the models/ directory to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "models"))
+sys.path.insert(0, os.path.dirname(__file__))
+
 import argparse
 import math
 import os
@@ -34,6 +40,11 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from transformers import (
     BertTokenizer,
+    BertConfig,
+    BertForMaskedLM,
+    BertForSequenceClassification,
+    BertForTokenClassification,
+    BertForQuestionAnswering,
     DataCollatorForLanguageModeling,
     DataCollatorForTokenClassification,
     DefaultDataCollator,
@@ -41,6 +52,7 @@ from transformers import (
 )
 from datasets import load_dataset
 from tqdm import tqdm
+import wandb
 
 from configuration_mrbert import MrBertConfig
 from modeling_mrbert import (
@@ -49,12 +61,20 @@ from modeling_mrbert import (
     MrBertForTokenClassification,
     MrBertForQuestionAnswering,
 )
+from pi_controller import PIController
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fine-tune MrBERT for various tasks")
     
     # Task arguments
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="MrBERT",
+        choices=["MrBERT", "BERT"],
+        help="Model architecture: MrBERT (with delete gate) or BERT (baseline, no gate)",
+    )
     parser.add_argument(
         "--task",
         type=str,
@@ -82,6 +102,18 @@ def parse_args():
         default="scaled_sigmoid",
         choices=["scaled_sigmoid", "log_sigmoid", "random", "fixed"],
         help="Type of delete gate",
+    )
+    parser.add_argument(
+        "--use_softmax1",
+        action="store_true",
+        default=True,
+        help="Use softmax1 (n+1 denominator) for attention. Recommended by MrT5 paper.",
+    )
+    parser.add_argument(
+        "--no_use_softmax1",
+        action="store_false",
+        dest="use_softmax1",
+        help="Disable softmax1; use standard softmax.",
     )
     parser.add_argument(
         "--sigmoid_mask_scale",
@@ -114,6 +146,12 @@ def parse_args():
         type=str,
         default="mrt5/lm_datasets",
         help="Directory containing local mC4 preprocessed files (used when dataset_name='local_mc4')",
+    )
+    parser.add_argument(
+        "--local_snli_dir",
+        type=str,
+        default="snli_datasets",
+        help="Directory containing local SNLI preprocessed NDJSON files (used when dataset_name='local_snli')",
     )
     parser.add_argument(
         "--max_seq_length",
@@ -225,7 +263,13 @@ def parse_args():
         "--use_pi_controller",
         action="store_true",
         default=True,
-        help="Use PI-controller for deletion rate (recommended by MrT5 paper)",
+        help="Use PI-controller for deletion rate (recommended by MrT5 paper).",
+    )
+    parser.add_argument(
+        "--no_use_pi_controller",
+        action="store_false",
+        dest="use_pi_controller",
+        help="Disable PI-controller; use fixed deletion_loss_weight throughout training.",
     )
     
     # Other arguments
@@ -247,52 +291,33 @@ def parse_args():
         default=42,
         help="Random seed",
     )
-    
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="mrbert",
+        help="Weights & Biases project name",
+    )
+    parser.add_argument(
+        "--wandb_run_name",
+        type=str,
+        default=None,
+        help="Weights & Biases run name (default: auto-generated)",
+    )
+    parser.add_argument(
+        "--disable_wandb",
+        action="store_true",
+        default=False,
+        help="Disable Weights & Biases logging",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="training-only",
+        choices=["training-only", "eval-only", "training-and-eval"],
+        help="Whether to run training, eval, or both (default: training-only)",
+    )
+
     return parser.parse_args()
-
-
-class PIController:
-    """
-    PI-controller for dynamically adjusting deletion loss coefficient.
-    
-    Adapted from MrT5 trainer.py (lines 262-266):
-    Uses exponential moving average for proportional term.
-    
-    α_t = p_acc + i_acc
-    where:
-      p_acc = 0.9 * p_acc + 0.1 * k_p * error
-      i_acc = i_acc + k_i * error
-      error = target_rate - actual_rate
-    """
-    
-    def __init__(self, target_rate: float, kp: float = 0.5, ki: float = 1e-5, alpha_0: float = 0.0):
-        self.target_rate = target_rate
-        self.kp = kp
-        self.ki = ki
-        self.p_acc = 0.0  # Proportional accumulator (with EMA)
-        self.i_acc = 0.0  # Integral accumulator
-    
-    def update(self, actual_rate: float) -> float:
-        """
-        Update the controller and return the new deletion loss coefficient (α).
-        
-        Args:
-            actual_rate: Current deletion rate (0 to 1, as percentage/100)
-            
-        Returns:
-            α: Updated deletion loss coefficient
-        """
-        # Error: how much more we want to delete
-        error = self.target_rate - actual_rate
-        
-        # Update accumulators (from MrT5 trainer.py)
-        self.p_acc = 0.9 * self.p_acc + 0.1 * self.kp * error
-        self.i_acc = self.i_acc + self.ki * error
-        
-        # PI control law
-        alpha = max(0.0, self.p_acc + self.i_acc)
-        
-        return alpha
 
 
 def compute_deletion_loss(delete_gate_output, input_ids, deletion_threshold, sigmoid_mask_scale, pad_token_id=0):
@@ -306,7 +331,7 @@ def compute_deletion_loss(delete_gate_output, input_ids, deletion_threshold, sig
         percent_deleted: Percentage of non-pad tokens deleted (0-100)
     """
     if delete_gate_output is None:
-        return torch.tensor(0.0), 0.0
+        return torch.tensor(0.0), 0.0, 0.0
     
     delete_gate_output = delete_gate_output.squeeze(-1)
     
@@ -327,11 +352,15 @@ def compute_deletion_loss(delete_gate_output, input_ids, deletion_threshold, sig
     num_deleted = ((delete_gate_output < deletion_threshold) & non_pad_mask).sum()
     
     if num_non_pad_tokens > 0:
-        percent_deleted = (num_deleted / num_non_pad_tokens * 100).item()
+        percent_deleted_non_pad = (num_deleted / num_non_pad_tokens * 100).item()
     else:
-        percent_deleted = 0.0
-    
-    return deletion_loss, percent_deleted
+        percent_deleted_non_pad = 0.0
+
+    total_tokens = delete_gate_output.numel()
+    num_deleted_all = (delete_gate_output < deletion_threshold).sum()
+    percent_deleted_all = (num_deleted_all / total_tokens * 100).item() if total_tokens > 0 else 0.0
+
+    return deletion_loss, percent_deleted_non_pad, percent_deleted_all
 
 
 # =============================================================================
@@ -423,6 +452,32 @@ def prepare_mlm_dataset(args, tokenizer):
 
 def prepare_sequence_classification_dataset(args, tokenizer):
     """Prepare dataset for Sequence Classification (e.g., GLUE tasks)."""
+
+    if args.dataset_name == "local_snli":
+        print(f"Loading LOCAL SNLI dataset from: {args.local_snli_dir}")
+        from datasets import load_dataset as hf_load_dataset
+        dataset = hf_load_dataset(
+            "json",
+            data_files={
+                "train":      f"{args.local_snli_dir}/snli-train.json",
+                "validation": f"{args.local_snli_dir}/snli-validation.json",
+                "test":       f"{args.local_snli_dir}/snli-test.json",
+            },
+        )
+        # input_ids and attention_mask are already tokenized; unwrap the outer list
+        # added by the preprocess script (shape was [1, seq_len] → [seq_len])
+        dataset = dataset.map(
+            lambda x: {
+                "input_ids":      x["input_ids"][0],
+                "attention_mask": x["attention_mask"][0],
+                "labels":         x["labels"],
+            },
+            desc="Unwrapping precomputed features",
+        )
+        num_labels = 3  # entailment, neutral, contradiction
+        data_collator = DefaultDataCollator()
+        return dataset, data_collator, num_labels
+
     print(f"Loading classification dataset: {args.dataset_name}/{args.dataset_config}")
     
     if args.dataset_config:
@@ -625,31 +680,242 @@ def prepare_question_answering_dataset(args, tokenizer):
 # =============================================================================
 
 def create_model(args, tokenizer, num_labels=None):
-    """Create the appropriate MrBERT model for the task."""
-    
-    config = MrBertConfig.from_pretrained(
-        args.model_name,
-        deletion_type=args.deletion_type,
-        delete_gate_layer=args.delete_gate_layer,
-        sigmoid_mask_scale=args.sigmoid_mask_scale,
-        use_gumbel_noise=True,
-    )
-    
-    if args.task == "mlm":
-        model = MrBertForMaskedLM(config)
-    elif args.task == "sequence_classification":
-        config.num_labels = num_labels
-        model = MrBertForSequenceClassification(config)
-    elif args.task == "token_classification":
-        config.num_labels = num_labels
-        model = MrBertForTokenClassification(config)
-    elif args.task == "question_answering":
-        config.num_labels = 2  # start and end
-        model = MrBertForQuestionAnswering(config)
+    """Create the appropriate model for the task."""
+
+    if args.model_type == "MrBERT":
+        config = MrBertConfig.from_pretrained(
+            args.model_name,
+            deletion_type=args.deletion_type,
+            delete_gate_layer=args.delete_gate_layer,
+            sigmoid_mask_scale=args.sigmoid_mask_scale,
+            use_gumbel_noise=True,
+            use_softmax1=args.use_softmax1,
+        )
+        if args.task == "mlm":
+            model = MrBertForMaskedLM(config)
+        elif args.task == "sequence_classification":
+            config.num_labels = num_labels
+            model = MrBertForSequenceClassification(config)
+        elif args.task == "token_classification":
+            config.num_labels = num_labels
+            model = MrBertForTokenClassification(config)
+        elif args.task == "question_answering":
+            model = MrBertForQuestionAnswering(config)
+        else:
+            raise ValueError(f"Unknown task: {args.task}")
+
+    elif args.model_type == "BERT":
+        config = BertConfig.from_pretrained(args.model_name)
+        if args.task == "mlm":
+            model = BertForMaskedLM.from_pretrained(args.model_name, config=config)
+        elif args.task == "sequence_classification":
+            config.num_labels = num_labels
+            model = BertForSequenceClassification.from_pretrained(args.model_name, config=config)
+        elif args.task == "token_classification":
+            config.num_labels = num_labels
+            model = BertForTokenClassification.from_pretrained(args.model_name, config=config)
+        elif args.task == "question_answering":
+            model = BertForQuestionAnswering.from_pretrained(args.model_name, config=config)
+        else:
+            raise ValueError(f"Unknown task: {args.task}")
+
     else:
-        raise ValueError(f"Unknown task: {args.task}")
-    
+        raise ValueError(f"Unknown model_type: {args.model_type}")
+
     return model
+
+
+# =============================================================================
+# Evaluation Loop
+# =============================================================================
+
+SNLI_LABELS = {0: "entailment", 1: "neutral", 2: "contradiction"}
+
+
+def print_deletion_samples(args, model, eval_dataloader, tokenizer, n_samples=20):
+    """Print n_samples examples showing which tokens were kept vs deleted."""
+    model.eval()
+    samples_printed = 0
+
+    print("\n" + "=" * 70)
+    print(f"DELETION SAMPLES (first {n_samples})")
+    print("=" * 70)
+
+    with torch.no_grad():
+        for batch in eval_dataloader:
+            if samples_printed >= n_samples:
+                break
+
+            batch = {k: v.to(args.device) for k, v in batch.items()}
+            outputs = model(**batch)
+
+            input_ids = batch["input_ids"]
+            labels = batch.get("labels")
+            delete_gate_mask = getattr(outputs, "delete_gate_mask", None)
+            logits = getattr(outputs, "logits", None)
+
+            batch_size = input_ids.size(0)
+            for i in range(batch_size):
+                if samples_printed >= n_samples:
+                    break
+
+                ids = input_ids[i].tolist()
+                tokens = tokenizer.convert_ids_to_tokens(ids)
+
+                # Gate values for this example
+                if delete_gate_mask is not None:
+                    gate_vals = delete_gate_mask[i].squeeze(-1).tolist()
+                    deleted = [gate_vals[j] < args.deletion_threshold for j in range(len(tokens))]
+                else:
+                    deleted = [False] * len(tokens)
+
+                # Strip padding
+                pad_id = tokenizer.pad_token_id
+                non_pad = [(tok, d, ids[j]) for j, (tok, d) in enumerate(zip(tokens, deleted)) if ids[j] != pad_id]
+
+                kept_tokens   = [tok for tok, d, _ in non_pad if not d]
+                deleted_tokens = [tok for tok, d, _ in non_pad if d]
+
+                # Prediction and ground truth
+                pred_label = SNLI_LABELS.get(logits[i].argmax().item(), "?") if logits is not None else "?"
+                true_label = SNLI_LABELS.get(labels[i].item(), "?") if labels is not None else "?"
+                correct = "✓" if pred_label == true_label else "✗"
+
+                # Full sequence (mark deleted tokens with [X])
+                annotated = []
+                for tok, d, tid in non_pad:
+                    if tid in (tokenizer.cls_token_id, tokenizer.sep_token_id):
+                        annotated.append(tok)
+                    elif d:
+                        annotated.append(f"[{tok}]")
+                    else:
+                        annotated.append(tok)
+
+                print(f"\nSample {samples_printed + 1}:")
+                print(f"  Full sequence (deleted tokens in [brackets]):")
+                print(f"    {' '.join(annotated)}")
+                print(f"  Kept    ({len(kept_tokens):2d} tokens): {' '.join(kept_tokens)}")
+                print(f"  Deleted ({len(deleted_tokens):2d} tokens): {' '.join(deleted_tokens) if deleted_tokens else '(none)'}")
+                print(f"  Label: {true_label} | Predicted: {pred_label} {correct}")
+
+                samples_printed += 1
+
+    print("\n" + "=" * 70)
+    model.train()
+
+
+def evaluate(args, model, eval_dataloader, tokenizer, step=None):
+    """Run evaluation and return metrics. Optionally logs to W&B."""
+    model.eval()
+    total_loss = 0
+    total_accuracy = 0
+    total_deletion_rate = 0
+    total_seq_len = 0
+    num_batches = 0
+
+    with torch.no_grad():
+        for batch in tqdm(eval_dataloader, desc="Evaluating"):
+            batch = {k: v.to(args.device) for k, v in batch.items()}
+            outputs = model(**batch)
+
+            total_loss += outputs.loss.item()
+
+            if hasattr(outputs, 'logits') and outputs.logits is not None and 'labels' in batch:
+                preds = outputs.logits.argmax(dim=-1)
+                total_accuracy += (preds == batch['labels']).float().mean().item()
+
+            input_ids = batch.get('input_ids')
+            delete_gate_output = getattr(outputs, 'delete_gate_output', None)
+            _, percent_deleted, _ = compute_deletion_loss(
+                delete_gate_output,
+                input_ids,
+                deletion_threshold=args.deletion_threshold,
+                sigmoid_mask_scale=args.sigmoid_mask_scale,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            total_deletion_rate += percent_deleted
+
+            delete_gate_mask = getattr(outputs, 'delete_gate_mask', None)
+            if delete_gate_mask is not None:
+                kept = (delete_gate_mask.squeeze(-1) > args.deletion_threshold).float()
+                total_seq_len += kept.sum(dim=1).mean().item()
+            else:
+                total_seq_len += (input_ids != tokenizer.pad_token_id).float().sum(dim=1).mean().item()
+
+            num_batches += 1
+
+    model.train()
+
+    metrics = {
+        "eval/loss": round(total_loss / num_batches, 4),
+        "eval/accuracy": round(total_accuracy / num_batches, 4),
+        "eval/percent_deleted_tokens": round(total_deletion_rate / num_batches, 4),
+        "eval/avg_seq_len": round(total_seq_len / num_batches, 2),
+    }
+
+    print(f"\nEval results:")
+    for k, v in metrics.items():
+        print(f"  {k}: {v}")
+
+    if args.model_type == "MrBERT":
+        # Dropped token analysis and compute savings
+        from diagnostics import (
+            print_dropped_token_summary,
+            theoretical_compute_saved_pct,
+            aggregate_dropped_stats,
+            analyze_dropped_tokens,
+        )
+
+        # Collect dropped token stats across first 5 batches for a representative sample
+        model.eval()
+        stats_list = []
+        with torch.no_grad():
+            for i, batch in enumerate(eval_dataloader):
+                if i >= 5:
+                    break
+                batch = {k: v.to(args.device) for k, v in batch.items()}
+                outputs = model(**batch)
+                gate_mask = getattr(outputs, "delete_gate_mask", None)
+                if gate_mask is None:
+                    break
+                gate = gate_mask.squeeze(-1).cpu()
+                input_ids = batch["input_ids"].cpu()
+                keep_mask = gate > args.deletion_threshold
+                for b in range(input_ids.size(0)):
+                    stats_list.append(
+                        analyze_dropped_tokens(tokenizer, input_ids, keep_mask, batch_index=b)
+                    )
+        model.train()
+
+        if stats_list:
+            agg = aggregate_dropped_stats(stats_list)
+            print(f"\n  [Diagnostics] Dropped token analysis ({agg['n_samples']} examples):")
+            print(f"    avg kept={agg['avg_kept']:.1f}  avg dropped={agg['avg_dropped']:.1f}")
+            print(f"    dropped by type: {agg['dropped_by_type']}")
+            print(f"    kept by type:    {agg['kept_by_type']}")
+
+            # Compute savings using avg_seq_len from metrics
+            avg_seq_before = agg["avg_kept"] + agg["avg_dropped"]
+            avg_seq_after  = agg["avg_kept"]
+            compute_saved  = theoretical_compute_saved_pct(
+                seq_before=round(avg_seq_before),
+                seq_after=round(avg_seq_after),
+                num_layers=args.num_hidden_layers if hasattr(args, "num_hidden_layers") else 12,
+                gate_layer_index=args.delete_gate_layer,
+            )
+            print(f"    theoretical compute saved (MACs, Appendix C): ~{compute_saved * 100:.1f}%")
+            metrics["eval/compute_saved_pct"] = round(compute_saved * 100, 2)
+            metrics["eval/dropped_words_pct"] = round(
+                agg["dropped_by_type"]["word"] / max(agg["avg_dropped"], 1e-6), 4
+            )
+
+        # Print first-batch deletion sample
+        print_deletion_samples(args, model, eval_dataloader, tokenizer)
+
+    if not args.disable_wandb:
+        wandb.log(metrics, step=step)
+
+    return metrics
 
 
 # =============================================================================
@@ -658,6 +924,34 @@ def create_model(args, tokenizer, num_labels=None):
 
 def train(args, model, train_dataloader, eval_dataloader, tokenizer):
     """Training loop."""
+
+    # Initialize wandb
+    if not args.disable_wandb:
+        run_name = args.wandb_run_name or f"{args.model_type}_{args.model_name.split('/')[-1]}_seed{args.seed}"
+        wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                "model_type": args.model_type,
+                "model_name": args.model_name,
+                "task": args.task,
+                "delete_gate_layer": args.delete_gate_layer,
+                "deletion_type": args.deletion_type,
+                "sigmoid_mask_scale": args.sigmoid_mask_scale,
+                "deletion_threshold": args.deletion_threshold,
+                "target_deletion_rate": args.target_deletion_rate,
+                "learning_rate": args.learning_rate,
+                "delete_gate_lr": args.delete_gate_lr,
+                "batch_size": args.batch_size,
+                "max_steps": args.max_steps,
+                "warmup_steps": args.warmup_steps,
+                "controller_p": args.controller_p,
+                "controller_i": args.controller_i,
+                "deletion_loss_weight": args.deletion_loss_weight,
+                "regularizer_delay": args.regularizer_delay,
+                "seed": args.seed,
+            },
+        )
     
     # Separate parameters for different learning rates
     delete_gate_params = []
@@ -692,6 +986,8 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
     )
     
     print(f"\nTotal training steps: {total_steps}")
+    print(f"Steps per epoch: {len(train_dataloader)}")
+    print(f"Epochs: {args.num_epochs}")
     print(f"Warmup steps: {args.warmup_steps}")
     print(f"Target deletion rate: {args.target_deletion_rate:.1%}")
     if args.use_pi_controller:
@@ -707,13 +1003,23 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
     )
     current_alpha = args.deletion_loss_weight  # Current deletion loss coefficient
     
+    import time
+
     # Training loop
     model.train()
+    train_start = time.time()
     global_step = 0
     total_loss = 0
     total_task_loss = 0
     total_deletion_loss = 0
     total_deletion_rate = 0
+    total_deletion_rate_all = 0
+    total_gate_avg = 0
+    total_gate_std = 0
+    total_gate_max = 0
+    total_gate_min = 0
+    total_accuracy = 0
+    total_seq_len = 0
     
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -740,19 +1046,42 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
             
             # Deletion regularization loss with PI-controller
             delete_gate_output = getattr(outputs, 'delete_gate_output', None)
-            deletion_loss, percent_deleted = compute_deletion_loss(
+            deletion_loss, percent_deleted, percent_deleted_all = compute_deletion_loss(
                 delete_gate_output,
                 input_ids,
                 deletion_threshold=args.deletion_threshold,
                 sigmoid_mask_scale=args.sigmoid_mask_scale,
                 pad_token_id=tokenizer.pad_token_id,
             )
-            
-            # Convert percentage to rate (0-1) for PI-controller
+
+            # Convert percentage to rate (0-1) for PI-controller (uses non-pad rate)
             actual_del_rate = percent_deleted / 100.0
+
+            # Accumulate per-step gate distribution stats
+            if delete_gate_output is not None:
+                gate_vals = delete_gate_output.squeeze(-1)
+                total_gate_avg += gate_vals.mean().item()
+                total_gate_std += gate_vals.std(dim=1).mean().item()
+                total_gate_max += gate_vals.max(dim=1).values.mean().item()
+                total_gate_min += gate_vals.min(dim=1).values.mean().item()
+
+            # Accuracy: fraction of correct predictions in batch
+            if hasattr(outputs, 'logits') and outputs.logits is not None and 'labels' in batch:
+                preds = outputs.logits.argmax(dim=-1)
+                total_accuracy += (preds == batch['labels']).float().mean().item()
+
+            # Effective sequence length after soft deletion (tokens with gate > threshold)
+            # For BERT baseline (no gate), use full input length minus padding
+            delete_gate_mask = getattr(outputs, 'delete_gate_mask', None)
+            if delete_gate_mask is not None:
+                kept = (delete_gate_mask.squeeze(-1) > args.deletion_threshold).float()
+                total_seq_len += kept.sum(dim=1).mean().item()
+            else:
+                # No gate: count non-pad tokens
+                total_seq_len += (input_ids != tokenizer.pad_token_id).float().sum(dim=1).mean().item()
             
-            # Update PI-controller to get current α (only after regularizer_delay)
-            if args.use_pi_controller and global_step >= args.regularizer_delay:
+            # Update PI-controller to get current α (only after regularizer_delay, only for MrBERT)
+            if args.model_type == "MrBERT" and args.use_pi_controller and global_step >= args.regularizer_delay:
                 current_alpha = pi_controller.update(actual_del_rate)
             
             # Combined loss: task_loss + α * deletion_loss
@@ -764,6 +1093,7 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
             
             # Track deletion rate for logging
             total_deletion_rate += percent_deleted
+            total_deletion_rate_all += percent_deleted_all
             
             # Backward pass
             loss.backward()
@@ -785,7 +1115,7 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
             # Update progress bar
             progress_bar.set_postfix({
                 "loss": f"{loss.item():.4f}",
-                "task": f"{task_loss.item():.4f}",
+                "acc": f"{(outputs.logits.argmax(-1) == batch['labels']).float().mean().item():.3f}" if hasattr(outputs, 'logits') and 'labels' in batch else "n/a",
             })
             
             # Logging
@@ -793,18 +1123,56 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
                 avg_loss = total_loss / args.logging_steps
                 avg_task_loss = total_task_loss / args.logging_steps
                 avg_deletion_loss = total_deletion_loss / args.logging_steps
-                avg_del_pct = total_deletion_rate / args.logging_steps  # Percentage (0-100)
-                
-                print(f"\nStep {global_step}:")
+                avg_del_pct_non_pad = total_deletion_rate / args.logging_steps
+                avg_del_pct_all = total_deletion_rate_all / args.logging_steps
+                avg_gate_avg = total_gate_avg / args.logging_steps
+                avg_gate_std = total_gate_std / args.logging_steps
+                avg_gate_max = total_gate_max / args.logging_steps
+                avg_gate_min = total_gate_min / args.logging_steps
+                avg_accuracy = total_accuracy / args.logging_steps
+                avg_seq_len = total_seq_len / args.logging_steps
+
+                elapsed = time.time() - train_start
+                elapsed_str = f"{elapsed/3600:.1f}h" if elapsed >= 3600 else f"{elapsed/60:.1f}m"
+
+                print(f"\nStep {global_step} [{elapsed_str}]:")
                 print(f"  Loss: {avg_loss:.4f} (Task: {avg_task_loss:.4f}, Del: {avg_deletion_loss:.4f})")
-                print(f"  Deleted tokens: {avg_del_pct:.1f}% (target: {args.target_deletion_rate*100:.1f}%)")
+                print(f"  Accuracy: {avg_accuracy:.4f}")
+                print(f"  Seq length (effective): {avg_seq_len:.1f}")
+                print(f"  Deleted tokens (non-pad): {avg_del_pct_non_pad:.1f}% (target: {args.target_deletion_rate*100:.1f}%)")
                 print(f"  α (deletion coeff): {current_alpha:.6f}")
                 print(f"  LR: {scheduler.get_last_lr()[0]:.2e}")
-                
+
+                if not args.disable_wandb:
+                    wandb.log({
+                        "epoch": epoch + 1,
+                        "loss": round(avg_loss, 4),
+                        "cross_entropy_loss": round(avg_task_loss, 4),
+                        "delete_gate_loss": round(avg_deletion_loss, 4),
+                        "total_loss": round(avg_loss, 4),
+                        "accuracy": round(avg_accuracy, 4),
+                        "new_seq_len": round(avg_seq_len, 2),
+                        "percent_deleted_tokens": round(avg_del_pct_all, 4),
+                        "percent_non_pad_deleted_tokens": round(avg_del_pct_non_pad, 4),
+                        "delete_gate_average": round(avg_gate_avg, 4),
+                        "delete_gate_std": round(avg_gate_std, 4),
+                        "delete_gate_max_value": round(avg_gate_max, 4),
+                        "delete_gate_min_value": round(avg_gate_min, 4),
+                        "delete_gate_loss_coeff": round(current_alpha, 6),
+                        "learning_rate": scheduler.get_last_lr()[0],
+                    }, step=global_step)
+
                 total_loss = 0
                 total_task_loss = 0
                 total_deletion_loss = 0
                 total_deletion_rate = 0
+                total_deletion_rate_all = 0
+                total_gate_avg = 0
+                total_gate_std = 0
+                total_gate_max = 0
+                total_gate_min = 0
+                total_accuracy = 0
+                total_seq_len = 0
             
             # Save checkpoint
             if global_step % args.save_steps == 0:
@@ -825,8 +1193,11 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
     print(f"\nSaving final model to {final_path}")
     model.save_pretrained(final_path)
     tokenizer.save_pretrained(final_path)
-    
-    return model
+
+    if not args.disable_wandb and args.mode == "training-only":
+        wandb.finish()
+
+    return model, global_step
 
 
 def main():
@@ -838,12 +1209,13 @@ def main():
         torch.cuda.manual_seed_all(args.seed)
     
     print("=" * 60)
-    print(f"MrBERT Fine-tuning - Task: {args.task.upper()}")
+    print(f"Training - Model: {args.model_type}, Task: {args.task.upper()}")
     print("=" * 60)
     print(f"Device: {args.device}")
-    print(f"Delete gate layer: {args.delete_gate_layer}")
-    print(f"Deletion type: {args.deletion_type}")
-    print(f"Target deletion rate: {args.target_deletion_rate}")
+    if args.model_type == "MrBERT":
+        print(f"Delete gate layer: {args.delete_gate_layer}")
+        print(f"Deletion type: {args.deletion_type}")
+        print(f"Target deletion rate: {args.target_deletion_rate}")
     print()
     
     # Load tokenizer
@@ -872,6 +1244,9 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
+
+    from diagnostics import log_parameter_summary
+    log_parameter_summary(model, label=args.model_type)
     
     # Create dataloaders
     # Handle both regular datasets and iterable datasets (for local_mc4)
@@ -908,11 +1283,25 @@ def main():
     except (KeyError, TypeError):
         pass  # No validation set
     
-    # Train
-    model = train(args, model, train_dataloader, eval_dataloader, tokenizer)
-    
-    print("\nTraining complete!")
-    print("=" * 60)
+    # Train / eval based on --mode
+    global_step = 0
+    if args.mode in ("training-only", "training-and-eval"):
+        model, global_step = train(args, model, train_dataloader, eval_dataloader, tokenizer)
+        print("\nTraining complete!")
+        print("=" * 60)
+
+    if args.mode in ("eval-only", "training-and-eval"):
+        if eval_dataloader is None:
+            print("No validation set available — skipping eval.")
+        else:
+            if not args.disable_wandb and args.mode == "eval-only":
+                run_name = args.wandb_run_name or f"{args.model_type}_{args.model_name.split('/')[-1]}_seed{args.seed}_eval"
+                wandb.init(project=args.wandb_project, name=run_name, config=vars(args))
+            evaluate(args, model, eval_dataloader, tokenizer, step=global_step)
+            if not args.disable_wandb:
+                wandb.finish()
+        print("\nEval complete!")
+        print("=" * 60)
 
 
 if __name__ == "__main__":

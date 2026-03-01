@@ -25,9 +25,9 @@ class MrBertConfig(BertConfig):
         delete_gate_layer (`int`, *optional*, defaults to 3):
             The encoder layer index where the delete gate is applied.
             Layer indexing starts at 0. MrT5 paper uses layer 3.
-        use_softmax1 (`bool`, *optional*, defaults to False):
+        use_softmax1 (`bool`, *optional*, defaults to True):
             Whether to use the softmax1 variant (softmax with n+1 denominator)
-            for attention score normalization.
+            for attention score normalization. Recommended by the MrT5 paper.
         deletion_type (`str`, *optional*, defaults to "scaled_sigmoid"):
             Type of delete gate to use. Options:
             - "scaled_sigmoid": Learnable gate with scaled sigmoid activation
@@ -51,7 +51,7 @@ class MrBertConfig(BertConfig):
         gate_layer_norm: bool = True,
         deletion_threshold: float = -15.0,  # MrT5 default (sigmoid_mask_scale / 2)
         delete_gate_layer: int = 3,  # MrT5 default (layer 3, 0-indexed)
-        use_softmax1: bool = False,
+        use_softmax1: bool = True,
         deletion_type: str = "scaled_sigmoid",
         random_deletion_probability: float = 0.5,
         fixed_deletion_amount: float = 0.5,
