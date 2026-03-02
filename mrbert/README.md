@@ -1098,3 +1098,225 @@ Evaluating: 100%|██████████| 308/308 [00:17<00:00, 17.25it/s
 TODO: get rid of --training-and-eval and --eval-only arg. instead keep --training-only (default) - this runs training + validation during training + test after training completes and --test-only - runs    
   test only  
 ---
+❯ explain epoch, steps, batch size                                                                                                                                                                         
+                                   
+⏺ Batch size — how many training examples are processed in one forward+backward pass. With batch size 32, the model sees 32 SNLI sentence pairs at once and updates its weights once.                      
+                                                                                                                                                                                                           
+  Step — one forward+backward pass on a single batch. Each step:                                                                                                                                           
+  1. Feed 32 examples through the model                                                                                                                                                                    
+  2. Compute loss                                                                                                                                                                                          
+  3. Backpropagate gradients                                                                                                                                                                               
+  4. Update weights
+
+  Epoch — one full pass through the entire training dataset. With 549,367 SNLI examples and batch size 32:
+
+  steps_per_epoch = 549,367 / 32 ≈ 17,168 steps
+
+  For your runs (3 epochs, batch size 32):
+
+  Total steps = 3 × 17,168 ≈ 51,500 steps
+
+  Each step the model sees 32 new examples. After 17,168 steps it has seen every example once (= 1 epoch). After 3 epochs it has seen every example 3 times.
+
+  Why it matters for your training:
+  - --max_steps -1 lets it run all 51,500 steps
+  - --logging_steps 50 logs metrics every 50 steps (~17 times per epoch)
+  - --eval_steps 500 runs validation every 500 steps (~3 times per epoch)
+  - The LR scheduler decays linearly from 2e-5 to 0 spread across all 51,500 steps — this is why --max_steps -1 matters; setting a hard step limit confuses the scheduler
+---
+❯ explain train/loss vs train/cross_entropy_loss. what is the difference and which one should I compare validation loss against to make sure we arn't overfitting. 
+  ⎿ [Image #7]                                                                                                                                                                                            
+  ⎿ [Image #8]                                                                                                                                                                                            
+                                                                                                                                                                                                           
+⏺ train/cross_entropy_loss — the task loss only. How well the model predicts the correct SNLI label (entailment/neutral/contradiction). This is the same metric for both MrBERT and BERT baseline, making  
+  it directly comparable across runs.                                                                                                                                                                      
+                                                                                                                                                                                                           
+  train/loss — total loss = cross_entropy_loss + α × deletion_loss. For MrBERT only. The deletion term is added on top, so train/loss is always ≥ train/cross_entropy_loss. For BERT baseline they are     
+  identical (no deletion term).                                                                                                                                                                            
+                  
+  ---
+  For overfitting comparison, use cross_entropy_loss — compare train/cross_entropy_loss vs eval/cross_entropy_loss.
+
+  - train/loss includes the deletion regulariser which eval doesn't have, making the comparison apples-to-oranges
+  - cross_entropy_loss measures the same thing in both phases: how well the model classifies
+
+  ---
+  What the charts are telling you right now:
+
+  **The cross_entropy_loss chart is the most important one**. BERT baseline (teal) drops much faster and reaches ~0.2 by step 51k, while both MrBERT runs plateau around 0.6. This confirms the initialization
+  fix was necessary — these runs were trained from random weights. The next runs with pretrained weights should close that gap significantly.
+
+  The train/loss chart only shows the two MrBERT runs (BERT has no deletion term so it's identical to cross_entropy_loss and was likely filtered out). The 30% run (pink) sits slightly above the 0% run
+  (orange) because its total loss includes the deletion regulariser term on top of the task loss.
+---
+❯ what should I watch out for in this comparison chart?                                                                                                                                                    
+  ⎿ [Image #9]                                                                                                                                                                                            
+                                                                                                                                                                                                           
+⏺ Looking at your chart, here's what to watch for:                                                                                                                                                         
+                                                                                                                                                                                                           
+  ---                                                                                                                                                                                                      
+  1. Gap between train and eval curves (overfitting signal)                                                                                                                                                
+                                                                                                                                                                                                           
+  For each run, the train curve should be at or below the eval curve. A widening gap = overfitting.
+
+  Right now for BERT baseline (grey): train loss (~0.25) is well below eval loss (~0.5) by step 1k. That gap is already visible and will widen — classic fine-tuning overfitting on SNLI.
+
+  For MrBERT 30% (pink/red): train and eval curves are nearly on top of each other — almost no gap. This means the model is underfitting rather than overfitting. It hasn't learned enough yet, which is
+  consistent with training from random weights.
+
+  ---
+  2. Eval loss bottoming out then rising
+
+  If eval/cross_entropy_loss stops falling and starts climbing while train/cross_entropy_loss keeps dropping — that's the clearest overfitting signal. Stop training at that point (or use the best
+  checkpoint).
+
+  ---
+  3. Both curves still declining at the end
+
+  Both runs here are still trending down at step 1k — the model hasn't converged. This confirms the runs are too short or the pretrained-weights fix hasn't been applied yet.
+
+  ---
+  What this chart is telling you right now:
+
+  - BERT baseline is learning much faster (steep drop to 0.25) — this is the pretrained weights advantage
+  - MrBERT 30% is barely learning (stuck around 0.6) — confirms these were the random-init runs
+  - The next runs with from_pretrained should show MrBERT tracking close to the BERT baseline curves
+---
+❯ what is the batch size we are using vs the one used by MrT5, explain the difference                                                                                                                      
+
+⏺ MrBERT: batch_size=32 per device, no gradient accumulation.                                                                                                                                              
+                                                                                                                                                                                                           
+  MrT5: per_device_train_batch_size=16 but effective_batch_size=64, achieved via gradient accumulation:                                                                                                    
+                                                                                                                                                                                                           
+  gradient_accumulation_steps = effective_batch_size // (per_device_train_batch_size × num_devices)                                                                                                        
+                               = 64 // (16 × 1) = 4 steps                                                                                                                                                  
+                  
+  ---
+  The difference:
+
+  MrT5 runs 4 forward passes on mini-batches of 16, accumulates the gradients without updating weights, then does one weight update — equivalent to a single batch of 64. This is gradient accumulation.
+
+  MrBERT does one forward pass on 32 examples and immediately updates weights.
+
+  Why it matters:
+
+  - Larger effective batch size (64 vs 32) gives more stable gradient estimates — less noisy weight updates
+  - MrT5's approach is memory-efficient: keeps per-device batch at 16 (fits in GPU memory) while simulating a larger batch
+  - With MrBERT's batch size of 32 on an A100 (40GB), you have headroom to increase — going to batch_size=64 directly (no accumulation needed) would match MrT5's effective batch size and potentially
+  stabilize training
+
+  For a fair comparison to MrT5, consider running with --batch_size 64 or adding --gradient_accumulation_steps 2 with --batch_size 32.
+
+❯ how would stabilized training be reflected?                                                                                                                                                              
+                                              
+⏺ Stabilized training from a larger batch size shows up in these ways in your W&B charts:                                                                                                                  
+                                                                                                                                                                                                         
+  train/cross_entropy_loss                                                                                                                                                                                 
+  - Smoother curve — less zigzag between logging steps                                                                                                                                                     
+  - More monotonically decreasing rather than bouncing up and down                                                                                                                                         
+                                                                                                                                                                                                           
+  train/accuracy
+  - Same — less variance step-to-step, steadier climb
+
+  train/percent_non_pad_deleted_tokens (MrBERT)
+  - The deletion rate converges to the 30% target more smoothly
+  - Less of the early spike-and-crash behavior you saw in previous runs where the gate would collapse then recover
+
+  train/delete_gate_loss_coeff (α)
+  - The PI controller adjusts α more predictably because each step's deletion rate estimate is based on more examples, so the error signal fed to the controller is less noisy
+  ---
+  In practice for your project:
+
+  The difference between batch 32 and 64 on SNLI is likely small — SNLI is a clean, well-balanced dataset and the loss curves in your runs are already fairly smooth. The bigger gains from batch size come
+   when training is unstable (e.g. the gate collapsing early), which you've partially addressed with regularizer_delay.
+
+  It's not a critical change for your paper. The pretrained weights fix will have a much larger effect on your results than doubling the batch size.
+---
+Learning rate.
+
+❯ does this look ok to you? explain the chart                                                                                                                                                              
+  ⎿  [Image #11]                                                                                                                                                                                           
+                                                                                                                                                                                                           
+⏺ Yes, this looks correct.                                                                                                                                                                                 
+                                                                                                                                                                                                           
+  What the chart shows:                                                                                                                                                                                    
+                                                                                                                                                                                                           
+  Linear decay from 2e-5 down to near 0 over ~51,500 steps. Both runs are identical (lines overlap) because they used the same learning rate schedule — same starting LR (2e-5), same number of steps, same
+   scheduler (linear decay, the HF Trainer default).
+
+  Why linear decay:
+
+  HF Trainer's default scheduler (get_linear_schedule_with_warmup) decays LR linearly from the initial value to 0 over total_steps. With --max_steps -1 and 3 epochs, total_steps ≈ 51,500, so by the final
+   step LR is essentially 0.
+
+  What to watch for:
+
+  - If the line doesn't reach near 0 by the last step, it means max_steps was set too low and the scheduler was calibrated for a shorter run — the LR decays too fast and the last portion of training gets
+   very small updates. This was the issue in your earlier 30k-step runs.
+  - Both lines overlapping perfectly confirms both runs used identical schedules, which is what you want for a fair comparison.
+
+❯ what is the learning rate we are using vs the one used by MrT5, explain the difference                                                                                                                   
+                                                                                        
+⏺ Searched for 3 patterns (ctrl+o to expand)                                                                                                                                                               
+                                                                                                                                                                                                         
+⏺ ┌───────────────┬───────────────────────────┬──────────────┐                                                                                                                                             
+  │               │          MrBERT           │     MrT5     │
+  ├───────────────┼───────────────────────────┼──────────────┤                                                                                                                                             
+  │ Learning rate │ 2e-5                      │ 1e-4         │                                                                                                                                             
+  ├───────────────┼───────────────────────────┼──────────────┤                                                                                                                                             
+  │ Scheduler     │ linear decay (HF default) │ linear decay │                                                                                                                                             
+  ├───────────────┼───────────────────────────┼──────────────┤
+  │ Warmup steps  │ 0 (HF default)            │ 0 (default)  │
+  └───────────────┴───────────────────────────┴──────────────┘
+
+  ---
+  Why the difference:
+
+  MrT5 uses 1e-4 because it trains from scratch on byte-level language modeling — a harder task requiring a larger LR to make meaningful progress in a reasonable number of steps.
+
+  MrBERT uses 2e-5 because it fine-tunes from pretrained weights. The model already has good representations; you only need a small LR to nudge the weights toward SNLI without destroying the pretrained
+  knowledge. 2e-5 is the standard BERT fine-tuning LR from the original BERT paper — using 1e-4 here would be too aggressive and likely catastrophically overwrite the pretrained weights.
+
+  ---
+  For your runs, 2e-5 is correct. It's the right LR for BERT fine-tuning. The MrT5 LR is not applicable to your setting.
+
+  
+❯  MrT5 uses 1e-4 because it trains from scratch on byte-level language modeling -> I thought you said earlier that MrT5 was also using pretrained model weights and not strating from scratch.            
+  ⎿  ⧉ Selected 1 lines from mrbert/README.md in PyCharm                                                                                                                                        
+                                                                                                                                                                                                           
+⏺ You're right, I was wrong. MrT5 also loads pretrained weights by default (load_model_from_hf). The --train_from_scratch flag exists but is not the default.                                            
+                                                                                                                                                                                                           
+  The real reason for the LR difference is simply that T5 pre-training and BERT fine-tuning use different conventional LR ranges:                                                                          
+                                                                                                                                                                                                           
+  - 1e-4 is the standard LR used in the T5 paper for fine-tuning T5 models                                                                                                                                 
+  - 2e-5 is the standard LR used in the BERT paper for fine-tuning BERT models
+
+  Both are fine-tuning from pretrained weights — they just come from different model families with different established conventions. The 2e-5 you're using for MrBERT is correct for BERT fine-tuning.
+---
+AdamW Optimizer
+
+❯ is the Adam Optimizer being used in MrT5? What are we using?                                                                                                                                              
+                                                                                                                                                                                                           
+⏺ Searched for 5 patterns (ctrl+o to expand)                                                                                                                                                             
+                                                                                                                                                                                                           
+⏺ Both MrT5 and MrBERT rely entirely on HF Trainer's default optimizer — neither explicitly sets one. The HF Trainer default is AdamW (torch.optim.AdamW) with:                                            
+                                                                                                                                                                                                           
+  ┌──────────────┬────────────────────┬────────────────────┐                                                                                                                                               
+  │              │       MrBERT       │        MrT5        │                                                                                                                                               
+  ├──────────────┼────────────────────┼────────────────────┤                                                                                                                                               
+  │ Optimizer    │ AdamW (HF default) │ AdamW (HF default) │                                                                                                                                               
+  ├──────────────┼────────────────────┼────────────────────┤
+  │ β₁           │ 0.9                │ 0.9                │
+  ├──────────────┼────────────────────┼────────────────────┤
+  │ β₂           │ 0.999              │ 0.999              │
+  ├──────────────┼────────────────────┼────────────────────┤
+  │ ε            │ 1e-8               │ 1e-8               │
+  ├──────────────┼────────────────────┼────────────────────┤
+  │ Weight decay │ 0.01               │ 0.01               │
+  └──────────────┴────────────────────┴────────────────────┘
+
+  Neither codebase overrides the optimizer — both just pass learning_rate to TrainingArguments and let Trainer handle the rest. So the optimizers are identical.
+
+  AdamW vs Adam: AdamW decouples weight decay from the gradient update (fixes a bug in the original Adam weight decay implementation). It's the standard choice for transformer fine-tuning and is what the
+   original BERT paper used.
+---

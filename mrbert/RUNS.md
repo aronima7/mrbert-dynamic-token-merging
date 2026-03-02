@@ -91,3 +91,18 @@ modal run --detach train_modal.py --model-type BERT --num-epochs 3 --max-steps -
 7. (MrBERT 3 epochs; 30% target deletion rate; softmax1 = true) 
 modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --mode training-and-eval --wandb-run-name run9-mrbert-softmax1-Trainer-30pct-3epochs
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+### Refactored MrBERT -> init from pretrained BERT (not random weights/scratch); softmax1
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+8. (MrBERT 3 epochs; 0% target deletion rate) -> try to get the same accuracy as BERT baseline
+modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.0 --mode training-and-eval --wandb-run-name run10-mrbert-Trainer-FromPretrained-0pct-3epochs
+
+9. (BERT 3 epochs) -> new BERT baseline after metric naming changes so its easier to compare
+modal run --detach train_modal.py --model-type BERT --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-run-name run11-bert-Trainer-baseline-3epochs
+
+10. (MrBERT 3 epochs;
+modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --mode training-and-eval --wandb-run-name run12-mrbert-Trainer-FromPretrained-30pct-3epochs
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+TODO: 
+* regularization delay
+* run with --batch_size 64 to stabilize training
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

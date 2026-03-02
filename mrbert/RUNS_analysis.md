@@ -395,3 +395,97 @@ RUN: run5-mrbert-softmax1-no-pi-5ep
   mode=training-and-eval, pi_controller=False
 ============================================================
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+### Refactored MrBERT
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+5. (MrBERT 3 epochs; 0% target deletion rate; softmax1 = true) -> try to get the same accuracy as BERT baseline
+modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.0 --mode training-and-eval --wandb-run-name run7-mrbert-softmax1-Trainer-0pct-3epochs
+
+6. (BERT 3 epochs; softmax1 = true) -> new BERT baseline after refactoring
+modal run --detach train_modal.py --model-type BERT --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-run-name run8-bert-Trainer-baseline-3epochs
+
+7. (MrBERT 3 epochs; 30% target deletion rate; softmax1 = true) 
+modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --mode training-and-eval --wandb-run-name run9-mrbert-softmax1-Trainer-30pct-3epochs
+
+❯ I ran 3 runs (above):                                                                                                                                                                                        
+  1. run7a - MrBert with 0 percent --target-deletion-rate                                                                                                                                              
+  2. run 8a - Bert (baseline)                                                                                                                                                                          
+  3. run 9a - MrBert with 30 percent --target-deletion-rate
+  The behavior I am seeing:                                                                                                                                                                            
+  The zero percent mrbert is the same accuracy as 30% deletion rate mrbert and both are much lower accuracy than baseline bert.
+  My expectation was that 0 percent MrBert would have similar accuracy as Baseline Bert. What is your analysis?                                                                                        
+
+⏺ The chart makes the gap clear. Here's the analysis:
+
+  What you're seeing is expected, and the culprit is use_softmax1=True on MrBERT vs standard softmax on BERT baseline.
+
+  ---
+  Why 0% MrBERT ≠ Baseline BERT accuracy
+
+  Even with --target-deletion-rate 0.0, MrBERT is not the same model as BERT. Two differences remain:
+
+  1. softmax1 in attention — MrBERT uses the modified attention normalization where weights can sum to <1. The baseline BERT uses standard softmax. This alone changes the attention dynamics across all 12
+   layers for every forward pass, even when no tokens are deleted.
+  2. Random weight initialization — MrBERT is initialized from scratch (from the BERT config, not pretrained weights). The baseline BERT loads pretrained bert-base-uncased weights and fine-tunes from
+  there. This is a massive disadvantage for MrBERT — it's learning SNLI from random init while BERT starts with 3 years of pre-training baked in.
+
+  ---
+  The initialization difference is almost certainly the dominant cause of the ~15% accuracy gap. Training from scratch on SNLI alone is much harder than fine-tuning a pretrained model.
+
+  Look at create_model in train_mrbert.py:
+
+  #### MrBERT — initialized from scratch
+  return MrBertForSequenceClassification(config)   # no pretrained weights
+
+  #### BERT — loads pretrained weights
+  return BertForSequenceClassification.from_pretrained(args.model_name, config=config)
+
+  ---
+  To make a fair comparison, MrBERT should also load pretrained BERT weights. The fix in create_model:
+
+  #### Instead of:
+  return MrBertForSequenceClassification(config)
+
+  #### Use:
+  return MrBertForSequenceClassification.from_pretrained(args.model_name, config=config)
+
+  This would load the pretrained BERT encoder weights and only randomly initialize the delete gate (which is a ~2K parameter addition). That's how MrT5 works — it starts from a pretrained T5 checkpoint
+  and adds the gate on top.
+
+  With pretrained weights, you'd expect 0% MrBERT ≈ BERT baseline, and 30% MrBERT to show whatever accuracy cost the deletion imposes.
+
+  #### Action:
+
+⏺ Done. What changed and why it matters:
+
+  Before: MrBertForSequenceClassification(config) — random init for all 109M parameters. The model had to learn BERT's language representations from scratch on SNLI alone, which explains the low         
+  accuracy.
+                                                                                                                                                                                                           
+  After: MrBertForSequenceClassification.from_pretrained(args.model_name, config=config, ignore_mismatched_sizes=True) — loads all 109M pretrained BERT weights, then _init_delete_gates() (already called
+  inside __init__ after post_init()) overwrites only the 2,305 gate parameters with bias=10. The ignore_mismatched_sizes=True suppresses the expected warning about the gate weights not existing in the
+  checkpoint.
+
+  With this change, 0% MrBERT should match BERT baseline accuracy, and 30% MrBERT will show you the true cost of deletion isolated from initialization effects.
+
+  #### Note:
+
+❯ point me to where MrT5 starts from pretrained model weights (instead of random weights)                                                                                                                  
+
+⏺ Found it. It's in mrt5/utils.py:133-140:                                                                                                                                                                 
+                                
+  def load_model_from_hf(model_class, model_name, config):                                                                                                                                                 
+      ...                                                                                                                                                                                                  
+      elif model_class == "MrT5":                                                                                                                                                                          
+          config.deletion_type = "scaled_sigmoid"                                                                                                                                                          
+          model = MrT5ForConditionalGeneration.from_pretrained(   # line 139
+              model_name, config=config)
+
+  This is called from train.py:335 when neither --train_from_scratch nor --model_path is set:
+
+  else:
+      accelerator.print("Loading model from Hugging Face...")
+      model = load_model_from_hf(args.model_type, args.model_name, t5_config)  # line 335
+
+  Exactly the same pattern as what MrBERT now does — MrT5ForConditionalGeneration.from_pretrained(model_name, config=config) loads all pretrained T5 weights, and the delete gate (absent from the
+  checkpoint) gets randomly initialized. MrT5 also has a --train_from_scratch flag for the ablation case, which MrBERT doesn't need since it was previously always training from scratch unintentionally.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

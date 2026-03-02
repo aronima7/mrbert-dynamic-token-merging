@@ -547,8 +547,10 @@ def create_model(args, tokenizer, num_labels=None):
     """
     Instantiate the appropriate model for the given task and model_type.
 
-    MrBERT: loads a BERT config, adds delete gate parameters, returns an
-            MrBertFor* model initialised from scratch (no pretrained weights).
+    MrBERT: loads pretrained BERT weights via from_pretrained, then randomly
+            initialises only the delete gate (bias=10, weight_std=0.001).
+            All other encoder weights are identical to the BERT baseline,
+            making the comparison fair.
     BERT:   loads pretrained weights from HuggingFace Hub via from_pretrained.
     """
     if args.model_type == "MrBERT":
@@ -561,16 +563,23 @@ def create_model(args, tokenizer, num_labels=None):
             use_gumbel_noise=True,       # adds exploration noise to the gate during training
             use_softmax1=args.use_softmax1,
         )
+        # Load pretrained BERT weights; the delete gate is absent from the checkpoint
+        # so it gets randomly initialised by _init_delete_gates() (bias=10, weight_std=0.001).
+        # ignore_mismatched_sizes=True suppresses the warning about the gate being new.
         if args.task == "mlm":
-            return MrBertForMaskedLM(config)
+            return MrBertForMaskedLM.from_pretrained(
+                args.model_name, config=config, ignore_mismatched_sizes=True)
         elif args.task == "sequence_classification":
             config.num_labels = num_labels
-            return MrBertForSequenceClassification(config)
+            return MrBertForSequenceClassification.from_pretrained(
+                args.model_name, config=config, ignore_mismatched_sizes=True)
         elif args.task == "token_classification":
             config.num_labels = num_labels
-            return MrBertForTokenClassification(config)
+            return MrBertForTokenClassification.from_pretrained(
+                args.model_name, config=config, ignore_mismatched_sizes=True)
         elif args.task == "question_answering":
-            return MrBertForQuestionAnswering(config)
+            return MrBertForQuestionAnswering.from_pretrained(
+                args.model_name, config=config, ignore_mismatched_sizes=True)
 
     elif args.model_type == "BERT":
         # Standard BERT loaded with pretrained weights
@@ -701,6 +710,9 @@ class MrBertTrainer(Trainer):
             ki=self.args.controller_i,
             alpha_0=self.args.deletion_loss_weight,
         ) if self.args.use_pi_controller else None
+        # Cache pad token ID to avoid accessing self.tokenizer in the hot path,
+        # which triggers a deprecation warning on every step in newer Transformers.
+        self._pad_token_id = self.processing_class.pad_token_id
 
     def train(self, *args, **kwargs):
         import time
@@ -739,25 +751,18 @@ class MrBertTrainer(Trainer):
     def _init_metrics(self):
         """Return a fresh dict of empty metric lists for one logging interval."""
         return {
-            "train/loss":                          [],
-            "train/cross_entropy_loss":            [],
-            "train/delete_gate_loss":              [],
-            "train/accuracy":                      [],
-            "train/percent_deleted_tokens":        [],
-            "train/percent_non_pad_deleted_tokens":[],
-            "train/delete_gate_average":           [],
-            "train/delete_gate_std":               [],
-            "train/delete_gate_max_value":         [],
-            "train/delete_gate_min_value":         [],
-            "train/delete_gate_loss_coeff":        [],  # current α from PI controller
-            "train/new_seq_len":                   [],  # effective seq length after deletion
-            "eval/loss":                           [],
-            "eval/cross_entropy_loss":             [],
-            "eval/accuracy":                       [],
-            "eval/percent_deleted_tokens":         [],
-            "eval/percent_non_pad_deleted_tokens": [],
-            "eval/delete_gate_average":            [],
-            "eval/new_seq_len":                    [],
+            "loss":                          [],
+            "cross_entropy_loss":            [],
+            "delete_gate_loss":              [],
+            "accuracy":                      [],
+            "percent_deleted_tokens":        [],
+            "percent_non_pad_deleted_tokens":[],
+            "delete_gate_average":           [],
+            "delete_gate_std":               [],
+            "delete_gate_max_value":         [],
+            "delete_gate_min_value":         [],
+            "delete_gate_loss_coeff":        [],  # current α from PI controller
+            "new_seq_len":                   [],  # effective seq length after deletion
         }
 
     # ------------------------------------------------------------------
@@ -785,7 +790,7 @@ class MrBertTrainer(Trainer):
             input_ids,
             deletion_threshold=self.args.deletion_threshold,
             sigmoid_mask_scale=self.args.sigmoid_mask_scale,
-            pad_token_id=self.tokenizer.pad_token_id,
+            pad_token_id=self._pad_token_id,
         )
 
         actual_del_rate = percent_deleted / 100.0
@@ -802,39 +807,38 @@ class MrBertTrainer(Trainer):
         else:
             loss = task_loss
 
-        # Accumulate metrics under "train/" or "eval/" prefix
-        prefix = "train/" if model.training else "eval/"
-        self.metrics[f"{prefix}loss"].append(loss.detach().item())
-        self.metrics[f"{prefix}cross_entropy_loss"].append(task_loss.detach().item())
-        self.metrics[f"{prefix}percent_deleted_tokens"].append(percent_deleted_all)
-        self.metrics[f"{prefix}percent_non_pad_deleted_tokens"].append(percent_deleted)
+        # Accumulate metrics (no prefix — W&B applies train/ or eval/ grouping automatically)
+        self.metrics["loss"].append(loss.detach().item())
+        self.metrics["cross_entropy_loss"].append(task_loss.detach().item())
+        self.metrics["percent_deleted_tokens"].append(percent_deleted_all)
+        self.metrics["percent_non_pad_deleted_tokens"].append(percent_deleted)
 
         if delete_gate_output is not None:
             gate_vals = delete_gate_output.squeeze(-1)
-            self.metrics[f"{prefix}delete_gate_average"].append(gate_vals.mean().detach().item())
+            self.metrics["delete_gate_average"].append(gate_vals.mean().detach().item())
             if model.training:
                 # Extra gate distribution stats are only tracked during training
                 del_loss_val = deletion_loss.item() if isinstance(deletion_loss, torch.Tensor) else float(deletion_loss)
-                self.metrics["train/delete_gate_loss"].append(del_loss_val)
-                self.metrics["train/delete_gate_std"].append(gate_vals.std(dim=1).mean().detach().item())
-                self.metrics["train/delete_gate_max_value"].append(gate_vals.max(dim=1).values.mean().detach().item())
-                self.metrics["train/delete_gate_min_value"].append(gate_vals.min(dim=1).values.mean().detach().item())
-                self.metrics["train/delete_gate_loss_coeff"].append(self.current_alpha)
+                self.metrics["delete_gate_loss"].append(del_loss_val)
+                self.metrics["delete_gate_std"].append(gate_vals.std(dim=1).mean().detach().item())
+                self.metrics["delete_gate_max_value"].append(gate_vals.max(dim=1).values.mean().detach().item())
+                self.metrics["delete_gate_min_value"].append(gate_vals.min(dim=1).values.mean().detach().item())
+                self.metrics["delete_gate_loss_coeff"].append(self.current_alpha)
 
         # Effective sequence length: tokens with gate > threshold (or all non-pad for BERT)
         delete_gate_mask = getattr(outputs, "delete_gate_mask", None)
         if delete_gate_mask is not None:
             kept = (delete_gate_mask.squeeze(-1) > self.args.deletion_threshold).float()
-            self.metrics[f"{prefix}new_seq_len"].append(kept.sum(dim=1).mean().item())
+            self.metrics["new_seq_len"].append(kept.sum(dim=1).mean().item())
         elif input_ids is not None:
-            self.metrics[f"{prefix}new_seq_len"].append(
-                (input_ids != self.tokenizer.pad_token_id).float().sum(dim=1).mean().item()
+            self.metrics["new_seq_len"].append(
+                (input_ids != self._pad_token_id).float().sum(dim=1).mean().item()
             )
 
         if hasattr(outputs, "logits") and outputs.logits is not None and "labels" in inputs:
             preds = outputs.logits.argmax(dim=-1)
             acc = (preds == inputs["labels"]).float().mean().item()
-            self.metrics[f"{prefix}accuracy"].append(acc)
+            self.metrics["accuracy"].append(acc)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -859,9 +863,12 @@ class MrBertTrainer(Trainer):
         # Epoch progress (fractional) and wall-clock elapsed time
         total_epochs = self.args.num_train_epochs
         current_epoch = self.state.epoch or 0.0
-        logs["epoch_progress"] = f"{current_epoch:.2f}/{total_epochs}"
+        logs["epoch_progress"] = f"Epoch {current_epoch:.2f}/{total_epochs}"
         elapsed = time.time() - getattr(self, "_train_start_time", time.time())
-        logs["elapsed_time_hrs"] = round(elapsed / 3600, 3)
+        h = int(elapsed // 3600)
+        m = int((elapsed % 3600) // 60)
+        s = int(elapsed % 60)
+        logs["elapsed_time"] = f"{h}h {m:02d}m {s:02d}s"
 
         self.metrics = self._init_metrics()
         super().log(logs, *args, **kwargs)
@@ -882,22 +889,19 @@ class BertTrainer(Trainer):
 
     def _init_metrics(self):
         return {
-            "train/cross_entropy_loss": [],
-            "train/accuracy":           [],
-            "eval/cross_entropy_loss":  [],
-            "eval/accuracy":            [],
+            "cross_entropy_loss": [],
+            "accuracy":           [],
         }
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         outputs = model(**inputs)
         loss = outputs.loss
 
-        prefix = "train/" if model.training else "eval/"
-        self.metrics[f"{prefix}cross_entropy_loss"].append(loss.detach().item())
+        self.metrics["cross_entropy_loss"].append(loss.detach().item())
 
         if hasattr(outputs, "logits") and outputs.logits is not None and "labels" in inputs:
             preds = outputs.logits.argmax(dim=-1)
-            self.metrics[f"{prefix}accuracy"].append(
+            self.metrics["accuracy"].append(
                 (preds == inputs["labels"]).float().mean().item()
             )
 
@@ -953,8 +957,8 @@ def main():
     else:
         raise ValueError(f"Unknown task: {args.task}")
 
-    # Build model
-    print(f"Creating {args.model_type} model...")
+    # Build model (MrBERT loads pretrained BERT weights + randomly inits the delete gate)
+    print(f"Creating {args.model_type} model from pretrained '{args.model_name}'...")
     model = create_model(args, tokenizer, num_labels)
     model.to(args.device)
 
@@ -996,7 +1000,7 @@ def main():
         # Only pass train_dataset when actually training
         train_dataset=train_dataset if args.mode in ("training-only", "training-and-eval") else None,
         eval_dataset=eval_dataset,   # used for periodic validation during training
-        tokenizer=tokenizer,
+        processing_class=tokenizer,  # replaces deprecated `tokenizer` kwarg
         data_collator=data_collator,
     )
 
@@ -1013,7 +1017,10 @@ def main():
             print("\nRunning final evaluation on test set...")
             print("=" * 60)
             # metric_key_prefix="test" prefixes all logged metrics with "test/"
-            trainer.evaluate(eval_dataset=test_dataset, metric_key_prefix="test")
+            test_metrics = trainer.evaluate(eval_dataset=test_dataset, metric_key_prefix="test")
+            print("\nTest set metrics:")
+            for k, v in sorted(test_metrics.items()):
+                print(f"  {k}: {v}")
             print("\nTest set evaluation complete!")
             print("=" * 60)
             if args.model_type == "MrBERT":
