@@ -30,6 +30,7 @@ HuggingFace TrainingArguments flags apply directly, e.g.:
 
 import sys
 import os
+import random
 import statistics
 
 # Add the models/ and training/ directories to the path so local modules are importable
@@ -135,6 +136,18 @@ class MrBertTrainingArguments(TrainingArguments):
         default="squad_datasets",
         metadata={"help": "Directory with local SQuAD NDJSON files (used when dataset_name='local_squad')"},
     )
+    max_train_samples: Optional[int] = field(
+        default=None,
+        metadata={"help": "Truncate training set to this many examples before training. "
+                          "Useful for smoke tests (e.g. --max_train_samples 800 with --max_steps 100 "
+                          "and --batch_size 8 loads exactly the examples needed)."},
+    )
+    max_eval_samples: Optional[int] = field(
+        default=None,
+        metadata={"help": "Truncate eval and test sets to this many examples before evaluation. "
+                          "Useful for smoke tests to avoid running full evaluation on CPU "
+                          "(e.g. --max_eval_samples 200 reduces final eval from ~10K to 200 examples)."},
+    )
     max_seq_length: int = field(
         default=512,
         metadata={"help": "Maximum token sequence length; inputs are truncated/padded to this length"},
@@ -175,6 +188,15 @@ class MrBertTrainingArguments(TrainingArguments):
     use_pi_controller: bool = field(
         default=True,
         metadata={"help": "Dynamically adjust deletion loss weight α with a PI controller to hit target_deletion_rate"},
+    )
+    hard_delete_train_prob: float = field(
+        default=0.0,
+        metadata={"help": (
+            "Probability of using hard deletion (physical token removal) on each training step. "
+            "Mirrors MrT5 training protocol. Default 0.0 = soft deletion only. "
+            "Set to e.g. 0.5 to mix hard and soft deletion during training — required for "
+            "hard deletion to work well at inference time without accuracy degradation."
+        )},
     )
 
     # ---- W&B ----
@@ -846,6 +868,8 @@ class MrBertTrainer(Trainer):
         # which triggers a deprecation warning on every step in newer Transformers.
         _proc = getattr(self, "processing_class", None) or self.tokenizer
         self._pad_token_id = _proc.pad_token_id
+        # RNG for hard_delete_train_prob sampling (independent of PyTorch/numpy seeds)
+        self._rng = random.Random()
 
     def train(self, *args, **kwargs):
         import time
@@ -867,8 +891,9 @@ class MrBertTrainer(Trainer):
                     "use_softmax1":         self.args.use_softmax1,
                     "target_deletion_rate": self.args.target_deletion_rate,
                     "deletion_loss_weight": self.args.deletion_loss_weight,
-                    "use_pi_controller":    self.args.use_pi_controller,
-                    "controller_p":         self.args.controller_p,
+                    "use_pi_controller":       self.args.use_pi_controller,
+                    "hard_delete_train_prob":  self.args.hard_delete_train_prob,
+                    "controller_p":            self.args.controller_p,
                     "controller_i":         self.args.controller_i,
                     "regularizer_delay":    self.args.regularizer_delay,
                     "dataset_name":         self.args.dataset_name,
@@ -913,7 +938,14 @@ class MrBertTrainer(Trainer):
         steps, only the task loss is used (deletion regulariser is off).
         """
         input_ids = inputs.get("input_ids")
-        outputs = model(**inputs)
+        # Randomly apply hard deletion during training to match MrT5 training protocol.
+        # hard_delete_train_prob=0.0 (default) keeps soft-deletion-only behaviour.
+        use_hard_delete = (
+            model.training
+            and self.args.hard_delete_train_prob > 0.0
+            and self._rng.random() < self.args.hard_delete_train_prob
+        )
+        outputs = model(**inputs, hard_delete=use_hard_delete)
         task_loss = outputs.loss
 
         # Compute deletion loss and deletion rate statistics
@@ -992,6 +1024,14 @@ class MrBertTrainer(Trainer):
             for k, v in self.metrics.items() if v
         }
         logs.update(aggregated)
+
+        # Sequence length reduction % — how much shorter the sequence is vs. the
+        # original max_seq_length. Derived from the aggregated new_seq_len so it
+        # appears in W&B alongside the other metrics without any extra accumulation.
+        if "new_seq_len" in aggregated and self.args.max_seq_length > 0:
+            logs["seq_len_reduction_pct"] = round(
+                (1.0 - aggregated["new_seq_len"] / self.args.max_seq_length) * 100.0, 2
+            )
 
         # Epoch progress (fractional) and wall-clock elapsed time
         total_epochs = self.args.num_train_epochs
@@ -1123,6 +1163,18 @@ def main():
         test_dataset = tokenized_dataset[test_split]
     except (KeyError, TypeError):
         pass
+
+    # Optionally truncate datasets for smoke tests (avoids slow tokenization / CPU eval)
+    if args.max_train_samples is not None and train_dataset is not None:
+        train_dataset = train_dataset.select(range(min(args.max_train_samples, len(train_dataset))))
+        print(f"Truncated train set to {len(train_dataset)} examples (--max_train_samples)")
+    if args.max_eval_samples is not None:
+        if eval_dataset is not None:
+            eval_dataset = eval_dataset.select(range(min(args.max_eval_samples, len(eval_dataset))))
+            print(f"Truncated eval set to {len(eval_dataset)} examples (--max_eval_samples)")
+        if test_dataset is not None:
+            test_dataset = test_dataset.select(range(min(args.max_eval_samples, len(test_dataset))))
+            print(f"Truncated test set to {len(test_dataset)} examples (--max_eval_samples)")
 
     # Select trainer class based on model type
     TrainerClass = MrBertTrainer if args.model_type == "MrBERT" else BertTrainer

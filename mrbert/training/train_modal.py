@@ -14,6 +14,9 @@ Train MrBERT on SNLI (with delete gate):
 Train BERT baseline on SNLI (no delete gate):
   modal run --detach train_modal.py --model-type BERT --max-steps 30000
 
+Train random deletion baseline (same rate, no learned gate):
+  modal run --detach train_modal.py --model-type MrBERT --deletion-type random --target-deletion-rate 0.3 --max-steps 30000
+
 Download checkpoints when done:
   modal volume get mrbert-checkpoints checkpoints ./local_mrbert_checkpoints
 """
@@ -33,7 +36,6 @@ DEFAULT_ARGS = [
     "--batch_size", "32",
     "--learning_rate", "2e-5",
     "--target_deletion_rate", "0.3",
-    "--deletion_loss_weight", "0.01",   # weak initial α — PI controller adjusts from here
     "--controller_p", "0.01",           # low proportional gain to prevent rapid α ramp-up
     "--controller_i", "0.00001",        # slow integral ramp to prevent gate collapse
     "--max_seq_length", "128",
@@ -94,6 +96,9 @@ def train(
     controller_p: float = 0.01,
     use_softmax1: bool = True,
     task: str = "sequence_classification",
+    deletion_type: str = "scaled_sigmoid",
+    hard_delete_train_prob: float = 0.0,
+    deletion_loss_weight: float = 0.1,
     extra_args: list[str] | None = None,
 ):
     """
@@ -113,6 +118,13 @@ def train(
         controller_p: Proportional gain for PI controller (default: 0.01). Increase for faster convergence.
         use_softmax1: Use softmax1 (n+1 denominator) for attention, as recommended by MrT5 paper (default: True).
         task: Training task — "sequence_classification" (SNLI) or "question_answering" (SQuAD).
+        deletion_type: Gate type — "scaled_sigmoid" (learned), "random", or "fixed" (default: scaled_sigmoid).
+        hard_delete_train_prob: Probability of using hard deletion on each training step (default: 0.0).
+            Set to 0.5 to mix hard/soft deletion during training — mirrors MrT5 protocol and is
+            required for hard deletion at inference to work without accuracy degradation.
+        deletion_loss_weight: Initial α₀ for deletion loss (default: 0.1, matching MrT5 recommendation).
+            The PI controller adjusts α from this starting value to hit target_deletion_rate.
+            Set to 0.0 to disable deletion pressure entirely.
         extra_args: Optional list of extra CLI args, e.g. ["--batch_size", "32"].
     """
     os.chdir("/workspace/training")
@@ -121,7 +133,7 @@ def train(
     print("=" * 60)
     print(f"RUN: {run_label}")
     print(f"  model_type={model_type}, task={task}, epochs={num_epochs}, max_steps={max_steps}")
-    print(f"  target_deletion_rate={target_deletion_rate}, delete_gate_layer={delete_gate_layer}")
+    print(f"  target_deletion_rate={target_deletion_rate}, delete_gate_layer={delete_gate_layer}, deletion_type={deletion_type}, hard_delete_train_prob={hard_delete_train_prob}")
     print(f"  mode={mode}, pi_controller={use_pi_controller}")
     print("=" * 60)
 
@@ -201,7 +213,11 @@ def train(
         "--target_deletion_rate", str(target_deletion_rate),
         "--mode", mode,
         "--delete_gate_layer", str(delete_gate_layer),
+        "--deletion_type", deletion_type,
+        "--deletion_loss_weight", str(deletion_loss_weight),
     ]
+    if hard_delete_train_prob > 0.0:
+        cmd.extend(["--hard_delete_train_prob", str(hard_delete_train_prob)])
     if not use_pi_controller:
         cmd.append("--no_use_pi_controller")
     if wandb_run_name:
@@ -241,8 +257,11 @@ def main(
     controller_p: float = 0.01,
     use_softmax1: bool = True,
     task: str = "sequence_classification",
+    deletion_type: str = "scaled_sigmoid",
+    hard_delete_train_prob: float = 0.0,
+    deletion_loss_weight: float = 0.1,
 ):
     """
-    Entrypoint for `modal run train_modal.py [--task sequence_classification|question_answering] [--model-type MrBERT|BERT] [--max-steps N] [--num-epochs N] [--target-deletion-rate F] [--mode ...] [--no-use-pi-controller] [--delete-gate-layer N] [--wandb-run-name NAME] [--wandb-project NAME] [--controller-p F] [--no-use-softmax1]`.
+    Entrypoint for `modal run train_modal.py [--task sequence_classification|question_answering] [--model-type MrBERT|BERT] [--max-steps N] [--num-epochs N] [--target-deletion-rate F] [--mode ...] [--no-use-pi-controller] [--delete-gate-layer N] [--wandb-run-name NAME] [--wandb-project NAME] [--controller-p F] [--no-use-softmax1] [--deletion-type scaled_sigmoid|random|fixed] [--hard-delete-train-prob F] [--deletion-loss-weight F]`.
     """
-    train.remote(output_dir="/checkpoints", model_type=model_type, max_steps=max_steps, num_epochs=num_epochs, target_deletion_rate=target_deletion_rate, mode=mode, use_pi_controller=use_pi_controller, delete_gate_layer=delete_gate_layer, wandb_run_name=wandb_run_name, wandb_project=wandb_project, controller_p=controller_p, use_softmax1=use_softmax1, task=task)
+    train.remote(output_dir="/checkpoints", model_type=model_type, max_steps=max_steps, num_epochs=num_epochs, target_deletion_rate=target_deletion_rate, mode=mode, use_pi_controller=use_pi_controller, delete_gate_layer=delete_gate_layer, wandb_run_name=wandb_run_name, wandb_project=wandb_project, controller_p=controller_p, use_softmax1=use_softmax1, task=task, deletion_type=deletion_type, hard_delete_train_prob=hard_delete_train_prob, deletion_loss_weight=deletion_loss_weight)

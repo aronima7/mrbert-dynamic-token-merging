@@ -10,18 +10,30 @@ Key differences from MrT5:
   - BERT-base dimensions: d_model=768, d_ff=3072, 12 encoder layers
   - Gate at layer 3 by default (0-indexed: deletion happens after layer 3)
 
-Produces three figures saved to analysis/figures/:
-  1. macs_relative.pdf         — relative compute vs deletion ratio for gate at layer 3
-  2. macs_by_gate_layer.pdf    — relative compute vs deletion ratio for gate at layers 1, 3, 6, 9
-  3. accuracy_vs_compute.pdf   — accuracy vs relative compute for each run (requires --runs)
+Produces figures saved to analysis/figures/:
+  1. macs_relative.pdf              — relative compute vs deletion ratio for gate at layer 3
+  2. macs_by_gate_layer.pdf         — relative compute vs deletion ratio for gate at layers 1, 3, 6, 9
+  3. accuracy_vs_compute.pdf        — accuracy vs relative compute for each run (requires --runs)
+  4. accuracy_vs_seq_reduction.pdf  — accuracy vs sequence length reduction % (requires --runs)
+                                      mirrors MrT5 paper Figure 2
+  5. gate_layer_ablation.pdf        — accuracy + runtime vs gate layer (requires --gate-layer-runs)
+                                      mirrors MrT5 paper Figure 4
 
 Usage:
     # Theoretical curves only (no run data needed)
     python analysis/compute_savings.py
 
-    # Include accuracy-vs-compute plot once you have eval results
+    # Include accuracy plots once you have eval results
     python analysis/compute_savings.py \\
-        --runs "BERT,0.9055,0.0" "MrBERT-30%,0.8141,0.32" "MrBERT-50%,0.78,0.50"
+        --runs "BERT,0.9055,0.0" "MrBERT-30%,0.8141,0.32" "MrBERT-50%,0.78,0.50" "MrBERT-70%,0.72,0.70"
+
+    # Gate layer ablation chart (accuracy + runtime vs layer)
+    python analysis/compute_savings.py \\
+        --gate-layer-runs \\
+            "Layer 1,0.88,32.1,1" \\
+            "Layer 3,0.87,28.5,3" \\
+            "Layer 6,0.85,24.1,6" \\
+            "Layer 9,0.82,20.8,9"
 
     # Adjust seq_len to your actual mean post-deletion sequence length
     python analysis/compute_savings.py --seq_len 27 \\
@@ -248,6 +260,123 @@ def plot_accuracy_vs_compute(runs: list, seq_len: int, gate_layer: int, output_d
     print(f"Saved → {path}")
 
 
+def plot_accuracy_vs_seq_length_reduction(runs: list, output_dir: str):
+    """
+    Figure 4 (Gap 3): accuracy vs sequence length reduction %.
+    Mirrors MrT5 paper Figure 2 (BPB vs sequence length reduction).
+
+    `runs` is a list of (label, accuracy, deletion_rate) tuples.
+    X-axis: sequence length reduction % = deletion_rate * 100
+    Y-axis: accuracy %
+
+    The BERT baseline (deletion_rate == 0) is shown as a horizontal dashed line.
+    Random/fixed deletion runs (if present in the list) are differentiated by marker.
+    """
+    # Separate baseline (0% deletion) from MrBERT runs
+    baseline_runs = [(l, a, d) for l, a, d in runs if d == 0.0]
+    mrbert_runs   = [(l, a, d) for l, a, d in runs if d > 0.0]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+
+    # Plot MrBERT points connected by a line (sorted by deletion rate)
+    mrbert_runs_sorted = sorted(mrbert_runs, key=lambda x: x[2])
+    if mrbert_runs_sorted:
+        xs = [d * 100 for _, _, d in mrbert_runs_sorted]
+        ys = [a * 100 for _, a, _ in mrbert_runs_sorted]
+        ax.plot(xs, ys, color="#e41a1c", linewidth=1.5, zorder=2)
+        for label, acc, dr in mrbert_runs_sorted:
+            ax.scatter(dr * 100, acc * 100, color="#e41a1c", s=70, zorder=3)
+            ax.annotate(
+                label,
+                xy=(dr * 100, acc * 100),
+                xytext=(dr * 100 + 1.0, acc * 100 + 0.3),
+                fontsize=8,
+                color="#e41a1c",
+            )
+
+    # Baseline: horizontal dashed line
+    for label, acc, _ in baseline_runs:
+        ax.axhline(y=acc * 100, color="#377eb8", linestyle="--", linewidth=1.5,
+                   label=f"{label} (no deletion, {acc * 100:.1f}%)", zorder=1)
+
+    ax.set_xlabel("Sequence length reduction (%)")
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_title("Accuracy vs sequence length reduction\n(MrBERT on SNLI)")
+    ax.set_xlim(-2, max(d * 100 for _, _, d in runs) + 10 if runs else 80)
+    if runs:
+        accs = [a * 100 for _, a, _ in runs]
+        ax.set_ylim(min(accs) - 3, max(accs) + 3)
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "accuracy_vs_seq_reduction.pdf")
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
+def plot_gate_layer_ablation(gate_layer_runs: list, output_dir: str):
+    """
+    Figure 5 (Gap 5): accuracy + runtime vs gate layer — dual y-axis.
+    Mirrors MrT5 paper Figure 4 (BPB + runtime vs gate layer).
+
+    `gate_layer_runs` is a list of (label, accuracy, runtime_ms, gate_layer) tuples, e.g.:
+        [("Layer 1", 0.88, 32.1, 1), ("Layer 3", 0.87, 28.5, 3), ...]
+
+    Left y-axis:  accuracy (%)
+    Right y-axis: inference runtime (ms/sample)
+    X-axis:       gate layer index
+    """
+    gate_layer_runs_sorted = sorted(gate_layer_runs, key=lambda x: x[3])
+    layers   = [gl for _, _, _, gl in gate_layer_runs_sorted]
+    accs     = [a * 100 for _, a, _, _ in gate_layer_runs_sorted]
+    runtimes = [rt for _, _, rt, _ in gate_layer_runs_sorted]
+
+    fig, ax1 = plt.subplots(figsize=(5, 4))
+    ax2 = ax1.twinx()
+
+    color_acc     = "#e41a1c"
+    color_runtime = "#377eb8"
+
+    ax1.plot(layers, accs, color=color_acc, linewidth=2, marker="o", markersize=6,
+             label="Accuracy", zorder=3)
+    ax2.plot(layers, runtimes, color=color_runtime, linewidth=2, marker="s", markersize=6,
+             linestyle="--", label="Runtime (ms/sample)", zorder=3)
+
+    # Annotate each accuracy point
+    for gl, acc in zip(layers, accs):
+        ax1.annotate(f"{acc:.1f}%", xy=(gl, acc),
+                     xytext=(gl + 0.1, acc + 0.2), fontsize=8, color=color_acc)
+
+    # Annotate each runtime point
+    for gl, rt in zip(layers, runtimes):
+        ax2.annotate(f"{rt:.1f}ms", xy=(gl, rt),
+                     xytext=(gl + 0.1, rt - 0.8), fontsize=8, color=color_runtime)
+
+    ax1.set_xlabel("Delete gate layer (0-indexed)")
+    ax1.set_ylabel("Accuracy (%)", color=color_acc)
+    ax2.set_ylabel("Inference runtime (ms/sample)", color=color_runtime)
+    ax1.tick_params(axis="y", labelcolor=color_acc)
+    ax2.tick_params(axis="y", labelcolor=color_runtime)
+    ax1.set_xticks(layers)
+    ax1.set_title("Accuracy and runtime vs delete gate layer\n(MrBERT, 30% deletion, SNLI)")
+
+    # Combined legend from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=8, loc="lower left")
+
+    ax1.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "gate_layer_ablation.pdf")
+    fig.savefig(path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {path}")
+
+
 # ---------------------------------------------------------------------------
 # Text summary
 # ---------------------------------------------------------------------------
@@ -283,9 +412,21 @@ def main():
         metavar="LABEL,ACC,DEL_RATE",
         default=None,
         help=(
-            "Runs to plot in Figure 3 (accuracy vs compute). "
+            "Runs to plot in accuracy-vs-compute and accuracy-vs-seq-reduction charts. "
             "Each entry is a comma-separated triple: label,accuracy,deletion_rate. "
             "Example: --runs 'BERT,0.9055,0.0' 'MrBERT-30%%,0.8141,0.32' 'MrBERT-50%%,0.78,0.50'"
+        ),
+    )
+    p.add_argument(
+        "--gate-layer-runs",
+        nargs="+",
+        metavar="LABEL,ACC,RUNTIME_MS,GATE_LAYER",
+        default=None,
+        dest="gate_layer_runs",
+        help=(
+            "Runs for the gate layer ablation chart (accuracy + runtime vs layer). "
+            "Each entry is: label,accuracy,runtime_ms,gate_layer. "
+            "Example: --gate-layer-runs 'Layer 1,0.88,32.1,1' 'Layer 3,0.87,28.5,3' 'Layer 6,0.85,24.1,6'"
         ),
     )
     args = p.parse_args()
@@ -300,7 +441,7 @@ def main():
         for entry in args.runs:
             parts = entry.split(",")
             if len(parts) != 3:
-                print(f"Warning: skipping malformed run entry {entry!r} (expected label,acc,del_rate)")
+                print(f"Warning: skipping malformed --runs entry {entry!r} (expected label,acc,del_rate)")
                 continue
             label, acc, del_rate = parts[0], float(parts[1]), float(parts[2])
             runs.append((label, acc, del_rate))
@@ -308,10 +449,28 @@ def main():
             plot_accuracy_vs_compute(runs, seq_len=args.seq_len,
                                      gate_layer=args.gate_layer,
                                      output_dir=args.output_dir)
+            plot_accuracy_vs_seq_length_reduction(runs, output_dir=args.output_dir)
     else:
-        print("\nSkipping accuracy_vs_compute.pdf — no --runs provided.")
+        print("\nSkipping accuracy plots — no --runs provided.")
         print("Once you have eval results, re-run with:")
         print("  --runs 'BERT,0.9055,0.0' 'MrBERT-30%,<acc>,0.32' 'MrBERT-50%,<acc>,0.50'")
+
+    if args.gate_layer_runs:
+        gl_runs = []
+        for entry in args.gate_layer_runs:
+            parts = entry.split(",")
+            if len(parts) != 4:
+                print(f"Warning: skipping malformed --gate-layer-runs entry {entry!r} "
+                      f"(expected label,acc,runtime_ms,gate_layer)")
+                continue
+            label, acc, runtime_ms, gate_layer = parts[0], float(parts[1]), float(parts[2]), int(parts[3])
+            gl_runs.append((label, acc, runtime_ms, gate_layer))
+        if gl_runs:
+            plot_gate_layer_ablation(gl_runs, output_dir=args.output_dir)
+    else:
+        print("\nSkipping gate_layer_ablation.pdf — no --gate-layer-runs provided.")
+        print("Once you have layer ablation results, re-run with:")
+        print("  --gate-layer-runs 'Layer 1,<acc>,<ms>,1' 'Layer 3,<acc>,<ms>,3' ...")
 
     print("\nDone.")
 

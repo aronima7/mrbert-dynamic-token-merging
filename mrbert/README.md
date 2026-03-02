@@ -574,6 +574,8 @@ Thu Feb 26 17:53:14 2026
  --- 
 ARONIMA RUNS
 
+  SNLI task
+
   cd mrbert
   python data/preprocess_snli.py --output_dir ./snli_datasets --max_samples 1000
   python training/train_mrbert.py --model_type MrBERT --task sequence_classification --mode training-and-eval --dataset_name local_snli --local_snli_dir ./snli_datasets --max_steps 50 --batch_size 8 --logging_steps 10 --output_dir ./bert_snli_test --disable_wandb
@@ -586,6 +588,12 @@ ARONIMA RUNS
 
   no PI
   modal run --detach train_modal.py --model-type MrBERT --max-steps -1 --num-epochs 3 --target-deletion-rate 0.3 --mode training-and-eval --no-use-pi-controller
+---
+  Q&A task
+
+  cd mrbert
+  python data/preprocess_squad.py --output_dir ./squad_datasets --max_samples 1000
+  python training/train_mrbert.py --model_type MrBERT --task question_answering --mode training-and-eval --dataset_name local_squad --local_squad_dir ./squad_datasets --max_steps 100 --max_train_samples 800 --max_eval_samples 200 --batch_size 8 --logging_steps 10 --eval_steps 50 --output_dir ./mrbert_squad_test --disable_wandb  --deletion_loss_weight 0.1  --target_deletion_rate 0.3
 --- 
 ❯ how many epochs will give me viable results?                                                                                                                                                             
   ⎿  ⧉ Selected 1 lines from mrbert/README.md in PyCharm                                                                                                                                                 
