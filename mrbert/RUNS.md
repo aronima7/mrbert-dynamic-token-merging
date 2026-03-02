@@ -111,4 +111,5 @@ TODO:
 * regularization delay
 * run with --batch_size 64 to stabilize training
 * other tasks for BERT
+* hard deletion being used at eval time?
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

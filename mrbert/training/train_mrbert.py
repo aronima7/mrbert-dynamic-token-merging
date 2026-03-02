@@ -1203,6 +1203,14 @@ def main():
         print("-" * 60)
         trainer.train()
         print("\nTraining complete!")
+
+        # Save final model to output_dir/final/ so it can be loaded for inference/eval.
+        # This is separate from the periodic checkpoint-{step}/ saves done by the Trainer.
+        final_dir = os.path.join(args.output_dir, "final")
+        print(f"\nSaving final model to {final_dir} ...")
+        trainer.save_model(final_dir)
+        tokenizer.save_pretrained(final_dir)
+        print(f"Final model saved → {final_dir}")
         print("=" * 60)
 
         # Final test-set evaluation after training completes

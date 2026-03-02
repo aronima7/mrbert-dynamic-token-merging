@@ -51,64 +51,64 @@
 ### SNLI — Tier 1 Core (Runs A, B, C, D, E, F)
 
 ```bash
-modal run --detach train_modal.py --model-type BERT --task sequence_classification --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name bert-snli-baseline
+modal run --detach train_modal.py::main --model-type BERT --task sequence_classification --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name bert-snli-baseline
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.0 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-0pct
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.0 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-0pct
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-30pct
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-30pct
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --hard-delete-train-prob 0.5 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-30pct-hd
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --hard-delete-train-prob 0.5 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-30pct-hd
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.5 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-50pct
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.5 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-50pct
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.7 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-70pct
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.7 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-70pct
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --deletion-type random --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-random30
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --deletion-type random --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-random30
 ```
 
 ### SNLI — Tier 2 Ablations (Runs G, H, I, J)
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --no-use-pi-controller --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-nopi
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --no-use-pi-controller --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-nopi
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer1
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer1
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 6 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer6
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 6 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer6
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 9 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer9
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 9 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer9
 ```
 
 ### SQuAD — Tier 1 Core (Runs K, L)
 
 ```bash
-modal run --detach train_modal.py --model-type BERT --task question_answering --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name bert-squad-baseline
+modal run --detach train_modal.py::main --model-type BERT --task question_answering --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name bert-squad-baseline
 ```
 
 ```bash
-modal run --detach train_modal.py --model-type MrBERT --task question_answering --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name mrbert-squad-30pct
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name mrbert-squad-30pct
 ```
 
 ---
 
-## Phase 2 — Download Checkpoints
+## Phase 2 — Download Checkpoints (Optional but Recommended)
 
 > **Sequential. Run after Phase 1 runs complete. Monitor progress at https://modal.com/apps.**
 
@@ -201,24 +201,23 @@ For each completed run, open W&B and copy the following values from the **Summar
 
 ## Phase 4 — Runtime Measurement
 
-> **Sequential. Requires Phase 2 (checkpoints downloaded) and `snli_datasets/` on disk.**
-> **Run from the `mrbert/` directory.**
-> **`--hard_delete` is now the default: MrBERT tokens are physically removed, giving real speedup.**
-> **Use `--no_hard_delete` to benchmark soft deletion (near-zero speedup, useful as a sanity check).**
+> **Run on A100 via Modal — do not run locally (CPU timing is unreliable for speedup claims).**
+> **Requires all Phase 1 training runs to have completed (checkpoints in the Modal volume).**
+> **Hard deletion is used by default: MrBERT tokens are physically removed from tensors on GPU.**
 
-Measure inference runtime for SNLI models (hard deletion — real speedup):
-
-```bash
-python analysis/measure_runtime.py --models "BERT,./local_checkpoints/bert-snli/final" "MrBERT-0%,./local_checkpoints/mrbert-snli-0pct/final" "MrBERT-30%,./local_checkpoints/mrbert-snli-30pct/final" "MrBERT-30%-HD,./local_checkpoints/mrbert-snli-30pct-hd/final" "MrBERT-50%,./local_checkpoints/mrbert-snli-50pct/final" "MrBERT-70%,./local_checkpoints/mrbert-snli-70pct/final" "Random-30%,./local_checkpoints/mrbert-snli-random30/final" --local_snli_dir ./snli_datasets --output_dir analysis/figures
-```
-
-Measure runtime for gate layer ablation:
+Launch the benchmark on A100 (uses all checkpoints already in the Modal volume):
 
 ```bash
-python analysis/measure_runtime.py --models "Layer 1,./local_checkpoints/mrbert-snli-layer1/final" "Layer 3,./local_checkpoints/mrbert-snli-30pct/final" "Layer 6,./local_checkpoints/mrbert-snli-layer6/final" "Layer 9,./local_checkpoints/mrbert-snli-layer9/final" --local_snli_dir ./snli_datasets --output_dir analysis/figures
+modal run training/train_modal.py::benchmark_main
 ```
 
-**Capture from stdout — fill in the table below:**
+This benchmarks all SNLI runs and gate-layer ablation runs against each other, then saves results to the volume. Download the results:
+
+```bash
+modal volume get mrbert-checkpoints analysis_figures ./analysis/figures
+```
+
+**Fill in the table from `analysis/figures/runtime_table.csv`:**
 
 | Model            | ms/sample | % decrease vs BERT |
 |------------------|-----------|--------------------|

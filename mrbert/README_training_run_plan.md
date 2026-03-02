@@ -281,3 +281,173 @@ If MrBERT (Run 2) significantly outperforms the random gate, it proves the learn
 3. **Runs 3 and 4** in parallel — complete the compression tradeoff curve
 4. **Run 5** — PI controller ablation
 5. **Runs 6 and 7** in parallel — gate layer sweep
+----------
+❯ will the analysis be run on my local machine after downloading the checkpoints and how long will that take with cpu?                                                                                                                                                               
+  ⎿  ⧉ Selected 1 lines from README_first_milestone_run_plan.md in PyCharm                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                     
+⏺ Let me think about what the analysis involves:                                                                                                                                                                                                                                     
+                                                                                                                                                                                                                                                                                     
+  Phase 4: measure_runtime.py                                                                                                                                                                                                                                                        
+  - Loads each checkpoint (BERT + MrBERT models, ~440MB each)                                                                                                                                                                                                                        
+  - Runs 5 warmup + 50 timed forward passes per model                                                                                                                                                                                                                                
+  - With batch_size=32, max_seq_length=128                                                                                                                                                                                                                                         
+  - On CPU, a BERT forward pass with batch=32, seq=128 takes roughly 2-4 seconds
+  - 55 passes × ~3s = ~165s per model × ~10 models = ~27 minutes
+
+  Phase 5: get_deletion_patterns.py / deletion_pattern_analysis.py
+  - Runs 1000 sample inferences
+  - Similar to above, maybe 10-15 minutes
+
+  Phase 6: compute_savings.py
+  - Pure Python/matplotlib computation
+  - Seconds
+
+  So total analysis time on CPU could be 30-60 minutes for Phase 4 alone.
+
+  Actually, the runtime measurement on CPU is inherently unreliable for measuring speedup because:
+  1. CPU doesn't parallelize matrix ops the same way GPU does
+  2. PyTorch CPU doesn't benefit from hard deletion as much as GPU (CUDA tensors benefit more from smaller tensor sizes)
+  3. The "speedup" numbers from CPU won't be representative of real-world GPU inference
+
+  This is an important caveat to mention.
+
+  Let me think about the size of checkpoints:
+  - BERT-base: ~440MB (pytorch_model.bin)
+  - MrBERT adds ~2,305 parameters (gate), negligible size difference
+
+  With 11 checkpoints (A, B, C, M, D, E, F, G, H, I, J, K, L) = 13 runs × ~440MB = ~5.7GB total download
+
+  Actually wait, the run plan has: A, B, C, M, D, E, F, G, H, I, J, K, L = 13 checkpoints × ~440MB ≈ ~5.7GB
+
+  Download speed depends on internet connection. With 100Mbps, 5.7GB would take about 8 minutes.
+
+  Let me give an honest assessment.
+
+  For measure_runtime.py on CPU:
+  - BERT-base forward pass: batch_size=32, seq_len=128
+  - Each forward pass: roughly 1-3 seconds on a typical laptop CPU
+  - n_warmup=5 + n_timed=50 = 55 passes per model
+  - 55 × 2s = 110s ≈ 2 minutes per model
+  - 10 models (SNLI) + 2 (gate layer ablation subset) = ~12 models × 2min = ~24 minutes just for timing
+
+  For the deletion pattern analysis:
+  - 1000 samples with batch_size=8 = 125 batches
+  - 125 × 1s (smaller batch) = ~2 minutes
+
+  For compute_savings.py: seconds.
+
+  Key problem with CPU runtime measurement:
+  The runtime numbers from CPU will NOT show meaningful speedup from hard deletion. PyTorch CPU operations don't benefit as much from shorter sequences because:
+  1. BLAS libraries have overhead for small matrices
+  2. Memory bandwidth isn't the bottleneck on CPU
+  3. The speedup is most visible on GPU where CUDA kernels are more efficient with shorter sequences
+
+  So the user should know:
+  1. Analysis runs locally on CPU after download - yes
+  2. Total time: maybe 30-45 minutes
+  3. BUT the runtime speedup numbers won't be meaningful on CPU — they should note this in the presentation
+
+  Actually, I should also consider that measure_runtime.py has configurable --n_timed and --batch_size. We could reduce these for faster local analysis.
+
+  Also important: the runtime measurement is supposed to demonstrate speedup. Doing it on CPU is misleading for the paper claim. The paper should ideally measure runtime on the same GPU hardware where training happened (A100).
+
+  One option: run measure_runtime.py on Modal too (add it to the run plan as an optional step).
+
+
+  Yes, all analysis (Phases 4–6) runs locally after downloading. Here's an honest breakdown:
+
+  Phase 4 — measure_runtime.py (the slow one)
+
+  Each model requires 5 warmup + 50 timed forward passes at batch_size=32, max_seq_len=128. On a typical laptop CPU, one BERT batch takes ~1–3 seconds:
+  - ~55 passes × ~2s = ~2 min per model
+  - 10 SNLI models + 4 gate-layer models = ~28 min total
+
+  Phase 5 — deletion pattern analysis: ~2–5 min (1000 samples, batch_size=8)
+
+  Phase 6 — compute_savings.py: seconds (pure Python/matplotlib)
+
+  Total: ~30–40 min on CPU
+
+  ---
+  More important problem: CPU runtime numbers won't show meaningful speedup.
+
+  Hard deletion shortens the sequence tensor from 128 → ~90 tokens. On GPU (A100), this produces real speedup because CUDA kernels scale with tensor size. On CPU, PyTorch's BLAS has fixed overhead per operation — a 30% shorter sequence often gives <5% speedup, sometimes none.
+  Reporting CPU numbers as "MrBERT is X% faster" in a paper would be misleading.
+
+  Recommendation: run measure_runtime.py on Modal on the same A100 used for training, not locally. The GPU numbers are what matter for the paper claim. I can add a Modal-hosted version of the runtime benchmark to the run plan — it would take ~5 minutes on A100 instead of 30+
+  minutes locally and the numbers would actually be meaningful.
+
+  Want me to add that?
+
+  ⏺ Phase 4 is updated. The diagnostics are just markdown linter warnings about table formatting and list numbering in unrelated sections of the file — these are pre-existing cosmetic issues, not actual errors.
+                                                                                                                                                                                                                                                                                     
+  Phase 4 now:                                                                                                                                                                                                                                                                       
+  - Removes the two local measure_runtime.py commands (which would give unreliable CPU timings)                                                                                                                                                                                      
+  - Uses modal run training/train_modal.py::benchmark_main to run on A100                                                                                                                                                                                                            
+  - Downloads results with modal volume get mrbert-checkpoints analysis_figures ./analysis/figures                                                                                                                                                                                 
+  - Reads results from the downloaded runtime_table.csv instead of capturing stdout
+
+✻ Sautéed for 3m 8s                                                                                                                                                                                                                                                                  
+   
+❯ does this mean I no longer need to download the model checkpoints as measure_runtime.py is now running on modal?                                                                                                                                                                   
+  ⎿  ⧉ Selected 1 lines from README_first_milestone_run_plan.md in PyCharm                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                                     
+⏺ Correct — for runtime measurement you no longer need to download checkpoints locally. The benchmark_main entrypoint reads directly from the Modal volume (/checkpoints/<run_name>/final), runs measure_runtime on the A100, and saves the CSV/PDF back to the volume. You only     
+  download the small results files:                                                                                                                                                                                                                                                  
+                                                                                                                                                                                                                                                                                     
+  modal volume get mrbert-checkpoints analysis_figures ./analysis/figures                                                                                                                                                                                                            
+                                                                                                                                                                                                                                                                                     
+  That said, Phase 2 (downloading checkpoints) may still be useful for:
+  - Running deletion pattern analysis locally (get_deletion_patterns.py, deletion_pattern_analysis.py) — those scripts need the model weights on disk
+  - Debugging or inspecting a specific checkpoint
+
+  So Phase 2 can stay in the plan as an optional/as-needed step rather than a hard prerequisite for Phase 4.
+
+  commands for running analysis locally with downlaoded checkpoints:
+
+   -python analysis/measure_runtime.py --models "BERT,./local_checkpoints/bert-snli/final" "MrBERT-0%,./local_checkpoints/mrbert-snli-0pct/final" "MrBERT-30%,./local_checkpoints/mrbert-snli-30pct/final" -"MrBERT-30%-HD,./local_checkpoints/mrbert-snli-30pct-hd/final" "MrBERT-50%,./local_checkpoints/mrbert-snli-50pct/final" "MrBERT-70%,./local_checkpoints/mrbert-snli-70pct/final" "Random-30%,./local_checkpoints/mrbert-snli-random30/final" --local_snli_dir -./snli_datasets --output_dir analysis/figures 
+   -python analysis/measure_runtime.py --models "Layer 1,./local_checkpoints/mrbert-snli-layer1/final" "Layer 3,./local_checkpoints/mrbert-snli-30pct/final" "Layer 6,./local_checkpoints/mrbert-snli-layer6/final" "Layer 9,./local_checkpoints/mrbert-snli-layer9/final" --local_snli_dir ./snli_datasets --output_dir analysis/figures
+----------
+⏺ Everything aligns. The run names in benchmark_main's defaults match the --wandb-run-name values in the run plan exactly:
+                                 
+  ┌───────────────────────────┬────────────────────────────────────┐                                                                                                                                                                                                                 
+  │ Run plan --wandb-run-name │       benchmark_main default       │                                                                                                                                                                                                                 
+  ├───────────────────────────┼────────────────────────────────────┤                                                                                                                                                                                                                 
+  │ bert-snli-baseline        │ BERT:bert-snli-baseline            │                                                                                                                                                                                                                 
+  ├───────────────────────────┼────────────────────────────────────┤                                                                                                                                                                                                               
+  │ mrbert-snli-0pct          │ MrBERT-0%:mrbert-snli-0pct         │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-30pct         │ MrBERT-30%:mrbert-snli-30pct       │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-30pct-hd      │ MrBERT-30%-HD:mrbert-snli-30pct-hd │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-50pct         │ MrBERT-50%:mrbert-snli-50pct       │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-70pct         │ MrBERT-70%:mrbert-snli-70pct       │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-random30      │ Random-30%:mrbert-snli-random30    │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-layer1        │ Layer-1:mrbert-snli-layer1         │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-layer6        │ Layer-6:mrbert-snli-layer6         │
+  ├───────────────────────────┼────────────────────────────────────┤
+  │ mrbert-snli-layer9        │ Layer-9:mrbert-snli-layer9         │
+  └───────────────────────────┴────────────────────────────────────┘
+
+  The full path for each checkpoint in the volume is /checkpoints/{run_label}/final — which is where train_mrbert.py writes the final model. The benchmark resolves paths the same way. Everything is consistent.
+----------
+❯ are we using hard deletion for the eval on test set after training completes?                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                                   
+⏺ Let me check what happens during the post-training eval.                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                                                                     
+⏺ Searched for 1 pattern, read 1 file (ctrl+o to expand)                                                                                                                                                                                                                             
+                                                       
+⏺ No — test evaluation uses soft deletion only. The trainer.evaluate() call goes through the Trainer's prediction_step, which calls model(**inputs) with no hard_delete argument, so it defaults to hard_delete=False.                                                               
+                                                                                                                                                                                                                                                                                     
+  This matches MrT5's approach: accuracy metrics are always reported with soft deletion (attention masking). Hard deletion is only used for the runtime benchmark. The reasoning is that soft deletion is the "fair" accuracy number — it shows what the gate learned without the    
+  approximation error that comes from physically removing tokens mid-sequence.                                                                                                                                                                                                       
+                                                                                                                                                                                                                                                                                     
+  So the current behaviour is correct and intentional:                                                                                                                                                                                                                               
+  - trainer.evaluate() → soft deletion → accuracy/EM/F1 metrics                                                                                                                                                                                                                      
+  - benchmark() on Modal → hard deletion → runtime (ms/sample) metrics
+----------

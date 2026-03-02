@@ -6,16 +6,16 @@ Prerequisites:
   modal token set  # one-time auth
 
 Quick test (short run):
-  modal run train_modal.py
+  modal run train_modal.py::main
 
 Train MrBERT on SNLI (with delete gate):
-  modal run --detach train_modal.py --model-type MrBERT --max-steps 30000
+  modal run --detach train_modal.py::main --model-type MrBERT --max-steps 30000
 
 Train BERT baseline on SNLI (no delete gate):
-  modal run --detach train_modal.py --model-type BERT --max-steps 30000
+  modal run --detach train_modal.py::main --model-type BERT --max-steps 30000
 
 Train random deletion baseline (same rate, no learned gate):
-  modal run --detach train_modal.py --model-type MrBERT --deletion-type random --target-deletion-rate 0.3 --max-steps 30000
+  modal run --detach train_modal.py::main --model-type MrBERT --deletion-type random --target-deletion-rate 0.3 --max-steps 30000
 
 Download checkpoints when done:
   modal volume get mrbert-checkpoints checkpoints ./local_mrbert_checkpoints
@@ -130,8 +130,12 @@ def train(
     os.chdir("/workspace/training")
 
     run_label = wandb_run_name or f"mrbert-{model_type.lower()}-{mode}"
+    # Each run gets its own subdirectory so parallel runs don't overwrite each other.
+    # The /final subdir is written by train_mrbert.py at the end of training.
+    run_output_dir = f"{output_dir}/{run_label}"
     print("=" * 60)
     print(f"RUN: {run_label}")
+    print(f"  output_dir={run_output_dir}")
     print(f"  model_type={model_type}, task={task}, epochs={num_epochs}, max_steps={max_steps}")
     print(f"  target_deletion_rate={target_deletion_rate}, delete_gate_layer={delete_gate_layer}, deletion_type={deletion_type}, hard_delete_train_prob={hard_delete_train_prob}")
     print(f"  mode={mode}, pi_controller={use_pi_controller}")
@@ -207,7 +211,7 @@ def train(
         *default_args_filtered,
         *task_args,
         "--model_type", model_type,
-        "--output_dir", output_dir,
+        "--output_dir", run_output_dir,
         "--max_steps", str(max_steps),
         "--num_epochs", str(num_epochs),
         "--target_deletion_rate", str(target_deletion_rate),
@@ -241,6 +245,152 @@ def train(
 
     print("Checkpoints saved to Volume 'mrbert-checkpoints'.")
     print("Download with: modal volume get mrbert-checkpoints <remote_path> <local_path>")
+
+
+# =============================================================================
+# Runtime benchmark (runs measure_runtime.py on A100 against saved checkpoints)
+# =============================================================================
+
+@app.function(
+    image=image,
+    gpu="A100",
+    volumes={"/checkpoints": volume},
+    timeout=3600,
+)
+def benchmark(
+    snli_models: str = "",
+    gate_layer_models: str = "",
+    n_warmup: int = 10,
+    n_timed: int = 100,
+    batch_size: int = 32,
+    output_subdir: str = "analysis_figures",
+):
+    """
+    Run measure_runtime.py on the A100 against checkpoints stored in the volume.
+
+    snli_models / gate_layer_models are comma-separated LABEL:run_name pairs, e.g.:
+      "BERT:bert-snli-baseline,MrBERT-30%:mrbert-snli-30pct"
+
+    Checkpoint paths are resolved as /checkpoints/<run_name>/final.
+    Results (runtime_table.csv, runtime_vs_deletion.pdf) are saved to
+    /checkpoints/<output_subdir>/ and committed to the volume for download.
+    """
+    import sys
+    sys.path.insert(0, "/workspace/models")
+    sys.path.insert(0, "/workspace/analysis")
+
+    output_dir = f"/checkpoints/{output_subdir}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    def parse_model_specs(spec_str):
+        """Parse 'LABEL:run_name,...' into [('LABEL', '/checkpoints/run_name/final'), ...]."""
+        if not spec_str.strip():
+            return []
+        entries = []
+        for part in spec_str.split(","):
+            part = part.strip()
+            if ":" not in part:
+                print(f"Warning: skipping malformed model spec {part!r} (expected LABEL:run_name)")
+                continue
+            label, run_name = part.split(":", 1)
+            path = f"/checkpoints/{run_name.strip()}/final"
+            if not os.path.exists(path):
+                print(f"Warning: checkpoint not found at {path} — skipping {label}")
+                continue
+            entries.append((label.strip(), path))
+        return entries
+
+    snli_entries      = parse_model_specs(snli_models)
+    gate_layer_entries = parse_model_specs(gate_layer_models)
+
+    def run_benchmark(model_entries, label):
+        if not model_entries:
+            print(f"No valid models for {label} benchmark — skipping.")
+            return
+        print(f"\n{'='*60}")
+        print(f"Benchmarking {label} ({len(model_entries)} models) on A100")
+        print(f"{'='*60}")
+
+        # Import here so sys.path insertions above are in effect
+        from measure_runtime import load_model, load_snli_batch, measure_runtime, print_and_save_table, plot_runtime_vs_deletion
+        import torch
+        from transformers import BertTokenizer
+
+        device = "cuda"
+        max_seq_length = 128
+
+        tokenizer = BertTokenizer.from_pretrained(model_entries[0][1])
+        dataset = load_snli_batch(
+            local_snli_dir="/checkpoints/snli_datasets",
+            tokenizer=tokenizer,
+            max_seq_length=max_seq_length,
+            n_samples=512,
+        )
+
+        all_results = []
+        for model_label, model_path in model_entries:
+            print(f"\nLoading {model_label} from {model_path} ...")
+            model = load_model(model_path, device)
+            stats = measure_runtime(
+                model=model,
+                dataset=dataset,
+                batch_size=batch_size,
+                n_warmup=n_warmup,
+                n_timed=n_timed,
+                device=device,
+                hard_delete=True,
+            )
+            ms   = stats["mean_ms_per_sample"]
+            std  = stats["std_ms_per_sample"]
+            seq  = stats["mean_seq_len_after"]
+            orig = stats["original_seq_len"]
+            print(f"  {model_label}: {ms:.2f} ± {std:.2f} ms/sample", end="")
+            if seq is not None:
+                print(f"  |  seq reduction: {(1 - seq/orig)*100:.1f}%", end="")
+            print()
+            all_results.append({
+                "label": model_label,
+                "mean_ms": ms,
+                "std_ms": std,
+                "mean_new_seq_len": seq,
+            })
+            del model
+            torch.cuda.empty_cache()
+
+        baseline_ms = all_results[0]["mean_ms"]
+        print_and_save_table(all_results, baseline_ms, max_seq_length, output_dir)
+        plot_runtime_vs_deletion(all_results, baseline_ms, output_dir)
+
+    run_benchmark(snli_entries, "SNLI")
+    run_benchmark(gate_layer_entries, "Gate layer ablation")
+
+    volume.commit()
+    print(f"\nResults saved to volume at '{output_subdir}/'")
+    print(f"Download with: modal volume get mrbert-checkpoints {output_subdir} ./analysis/figures")
+
+
+@app.local_entrypoint()
+def benchmark_main(
+    snli_models: str = "BERT:bert-snli-baseline,MrBERT-0%:mrbert-snli-0pct,MrBERT-30%:mrbert-snli-30pct,MrBERT-30%-HD:mrbert-snli-30pct-hd,MrBERT-50%:mrbert-snli-50pct,MrBERT-70%:mrbert-snli-70pct,Random-30%:mrbert-snli-random30",
+    gate_layer_models: str = "Layer-1:mrbert-snli-layer1,Layer-3:mrbert-snli-30pct,Layer-6:mrbert-snli-layer6,Layer-9:mrbert-snli-layer9",
+    n_warmup: int = 10,
+    n_timed: int = 100,
+    batch_size: int = 32,
+    output_subdir: str = "analysis_figures",
+):
+    """
+    Entrypoint for `modal run train_modal.py::benchmark_main`.
+    Runs inference timing on A100 against all trained checkpoints in the volume.
+    Defaults benchmark all SNLI runs; override with --snli-models and --gate-layer-models.
+    """
+    benchmark.remote(
+        snli_models=snli_models,
+        gate_layer_models=gate_layer_models,
+        n_warmup=n_warmup,
+        n_timed=n_timed,
+        batch_size=batch_size,
+        output_subdir=output_subdir,
+    )
 
 
 @app.local_entrypoint()

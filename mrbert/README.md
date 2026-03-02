@@ -593,7 +593,7 @@ ARONIMA RUNS
 
   cd mrbert
   python data/preprocess_squad.py --output_dir ./squad_datasets --max_samples 1000
-  python training/train_mrbert.py --model_type MrBERT --task question_answering --mode training-and-eval --dataset_name local_squad --local_squad_dir ./squad_datasets --max_steps 100 --max_train_samples 800 --max_eval_samples 200 --batch_size 8 --logging_steps 10 --eval_steps 50 --output_dir ./mrbert_squad_test --disable_wandb  --deletion_loss_weight 0.1  --target_deletion_rate 0.3
+  python training/train_mrbert.py --model_type MrBERT --task question_answering --mode training-only --dataset_name local_squad --local_squad_dir ./squad_datasets --max_steps 100 --max_train_samples 200 --max_eval_samples 200 --batch_size 8 --logging_steps 10 --eval_steps 50 --output_dir ./mrbert_squad_test --disable_wandb  --deletion_loss_weight 0.1  --target_deletion_rate 0.3  
 --- 
 ❯ how many epochs will give me viable results?                                                                                                                                                             
   ⎿  ⧉ Selected 1 lines from mrbert/README.md in PyCharm                                                                                                                                                 
@@ -1435,4 +1435,39 @@ AdamW Optimizer
   This covers 4 different task types and matches what MrT5 evaluated on (classification + span prediction + token-level tasks).
 ---
 Use W&B Reports — create a Report that pulls charts from multiple projects into one view. This is the recommended way to compare runs across projects without moving them.                            
+---
+ The bottleneck is clear from the logs: eval_runtime': 360.6609 — 6 minutes just for one eval pass over 200 examples. That's ~1.8 seconds per example on CPU.
+
+  The root cause is SQuAD QA evaluation. Let me check what compute_squad_em_f1 does:
+
+⏺ Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+⏺ The compute_squad_em_f1 is only called once at the end (after training), not during the mid-training evals. The 6-minute eval at step 50 is the HuggingFace Trainer's built-in evaluation — it's running a full forward pass over all 200 eval examples one-by-one at ~1.8
+  seconds/example on CPU.
+
+  The problem: SQuAD inputs are max_seq_length=384 (set in train_modal.py). Each forward pass processes 384-token sequences through the full BERT encoder. On CPU, one batch of 8 takes ~14 seconds (you can see ~7.5 min per 50 training steps from the logs). The eval pass at 50
+  steps confirms: 200 examples ÷ 0.555 samples/sec = 360 seconds.
+
+  The fix is to not evaluate during the smoke test — just train 100 steps with no mid-run eval:
+
+  python training/train_mrbert.py \
+      --model_type MrBERT \
+      --task question_answering \
+      --mode training-only \
+      --dataset_name local_squad \
+      --local_squad_dir ./squad_datasets \
+      --max_steps 100 \
+      --max_train_samples 200 \
+      --batch_size 8 \
+      --logging_steps 10 \
+      --output_dir ./mrbert_squad_test \
+      --disable_wandb \
+      --deletion_loss_weight 0.1 \
+      --target_deletion_rate 0.3
+
+  Two changes from your command:
+  1. --mode training-only — skips all evaluation entirely
+  2. --max_train_samples 200 — less data to iterate through (100 steps × batch 8 = 800 samples anyway, but smaller dataset speeds up initial dataset processing)
+
+  The 100 training steps themselves at batch size 8 on CPU will still take ~12 minutes (100 × ~7s/step), but no eval overhead. If you want it faster, drop to --max_steps 20 — enough to confirm the gate fires and loss decreases.
 ---
