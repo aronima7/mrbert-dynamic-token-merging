@@ -842,7 +842,7 @@ class MrBertTrainer(Trainer):
     # Logging: flush accumulated metrics then delegate to parent
     # ------------------------------------------------------------------
 
-    def log(self, logs):
+    def log(self, logs, *args, **kwargs):
         """
         Average all accumulated metrics and inject them into the log dict,
         then call the parent log() which handles W&B, console output, etc.
@@ -864,7 +864,7 @@ class MrBertTrainer(Trainer):
         logs["elapsed_time_hrs"] = round(elapsed / 3600, 3)
 
         self.metrics = self._init_metrics()
-        super().log(logs)
+        super().log(logs, *args, **kwargs)
 
 
 class BertTrainer(Trainer):
@@ -903,14 +903,14 @@ class BertTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-    def log(self, logs):
+    def log(self, logs, *args, **kwargs):
         aggregated = {
             k: round(statistics.fmean(v), 4)
             for k, v in self.metrics.items() if v
         }
         logs.update(aggregated)
         self.metrics = self._init_metrics()
-        super().log(logs)
+        super().log(logs, *args, **kwargs)
 
 
 # =============================================================================
