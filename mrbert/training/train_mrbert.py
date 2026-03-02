@@ -131,6 +131,10 @@ class MrBertTrainingArguments(TrainingArguments):
         default="snli_datasets",
         metadata={"help": "Directory with local SNLI NDJSON files (used when dataset_name='local_snli')"},
     )
+    local_squad_dir: str = field(
+        default="squad_datasets",
+        metadata={"help": "Directory with local SQuAD NDJSON files (used when dataset_name='local_squad')"},
+    )
     max_seq_length: int = field(
         default=512,
         metadata={"help": "Maximum token sequence length; inputs are truncated/padded to this length"},
@@ -475,10 +479,28 @@ def prepare_question_answering_dataset(args, tokenizer):
     """
     Prepare dataset for extractive Question Answering (e.g. SQuAD).
 
+    Supports pre-tokenized local SQuAD (dataset_name='local_squad') and
+    live loading from HuggingFace Hub (dataset_name='rajpurkar/squad' etc.).
+
     Long contexts are split into overlapping windows with stride=128.
     Start/end positions are mapped from character offsets to token indices.
     Returns (dataset_dict, data_collator).
     """
+
+    if args.dataset_name == "local_squad":
+        # Pre-tokenized SQuAD stored as NDJSON by preprocess_squad.py.
+        # Validation split is reused as test (SQuAD has no public test set).
+        print(f"Loading LOCAL SQuAD dataset from: {args.local_squad_dir}")
+        dataset = load_dataset(
+            "json",
+            data_files={
+                "train":      f"{args.local_squad_dir}/squad-train.json",
+                "validation": f"{args.local_squad_dir}/squad-validation.json",
+                "test":       f"{args.local_squad_dir}/squad-validation.json",
+            },
+        )
+        return dataset, DefaultDataCollator()
+
     print(f"Loading QA dataset: {args.dataset_name}")
     dataset = load_dataset(args.dataset_name)
 
@@ -606,7 +628,7 @@ def create_model(args, tokenizer, num_labels=None):
 SNLI_LABELS = {0: "entailment", 1: "neutral", 2: "contradiction"}
 
 
-def print_deletion_samples(args, model, dataloader, tokenizer, n_samples=20):
+def print_deletion_samples(args, model, dataloader, tokenizer, n_samples=20, split="TEST"):
     """
     Print the first n_samples examples showing which tokens the gate kept vs. deleted.
 
@@ -617,7 +639,7 @@ def print_deletion_samples(args, model, dataloader, tokenizer, n_samples=20):
     samples_printed = 0
 
     print("\n" + "=" * 70)
-    print(f"DELETION SAMPLES (first {n_samples})")
+    print(f"DELETION {split} SAMPLES (first {n_samples})")
     print("=" * 70)
 
     with torch.no_grad():
@@ -681,6 +703,116 @@ def print_deletion_samples(args, model, dataloader, tokenizer, n_samples=20):
 
 
 # =============================================================================
+# SQuAD EM / F1 Evaluation
+# =============================================================================
+
+def compute_squad_em_f1(args, model, test_dataset, tokenizer):
+    """
+    Compute Exact Match (EM) and F1 for SQuAD QA evaluation.
+
+    Iterates through test_dataset in batches, predicts answer spans from
+    start_logits / end_logits, decodes them to strings, and compares against
+    the stored answer_text using the standard SQuAD normalization rules.
+
+    Only features where the answer falls within the context window
+    (start_positions != 0) are scored — features where the answer was
+    outside the window were assigned CLS (position 0) during preprocessing
+    and cannot be evaluated fairly.
+
+    Args:
+        args:         MrBertTrainingArguments (uses device, per_device_eval_batch_size).
+        model:        Trained QA model.
+        test_dataset: HuggingFace Dataset with input_ids, attention_mask,
+                      start_positions, end_positions, answer_text columns.
+        tokenizer:    BertTokenizer for decoding predicted spans.
+
+    Returns:
+        dict with "test/squad_em" and "test/squad_f1" (both as percentages).
+    """
+    import re
+    import string
+    from collections import Counter
+
+    def normalize_answer(s):
+        """Lowercase, remove articles, punctuation and extra whitespace."""
+        s = s.lower()
+        s = re.sub(r"\b(a|an|the)\b", " ", s)
+        s = "".join(ch for ch in s if ch not in string.punctuation)
+        return " ".join(s.split())
+
+    def f1_score(pred, gold):
+        pred_tokens = normalize_answer(pred).split()
+        gold_tokens = normalize_answer(gold).split()
+        common = Counter(pred_tokens) & Counter(gold_tokens)
+        num_same = sum(common.values())
+        if num_same == 0:
+            return 0.0
+        precision = num_same / len(pred_tokens)
+        recall    = num_same / len(gold_tokens)
+        return 2 * precision * recall / (precision + recall)
+
+    if "answer_text" not in test_dataset.column_names:
+        print("\n  Skipping EM/F1: 'answer_text' not in dataset.")
+        print("  Re-run preprocess_squad.py to regenerate the dataset with answer text.")
+        return {}
+
+    model.eval()
+    em_scores, f1_scores = [], []
+    batch_size = args.per_device_eval_batch_size
+
+    print(f"\nComputing SQuAD EM/F1 on {len(test_dataset)} features...")
+
+    with torch.no_grad():
+        for start in range(0, len(test_dataset), batch_size):
+            batch = test_dataset[start: start + batch_size]
+
+            input_ids      = torch.tensor(batch["input_ids"]).to(args.device)
+            attention_mask = torch.tensor(batch["attention_mask"]).to(args.device)
+            start_positions = batch["start_positions"]
+            answer_texts    = batch["answer_text"]
+
+            outputs      = model(input_ids=input_ids, attention_mask=attention_mask)
+            start_logits = outputs.start_logits  # (batch, seq_len)
+            end_logits   = outputs.end_logits    # (batch, seq_len)
+
+            for i in range(len(answer_texts)):
+                # Skip features where the answer was outside this context window
+                if start_positions[i] == 0:
+                    continue
+                gold = answer_texts[i]
+                if not gold:
+                    continue
+
+                # Predict start; then find best end position at or after start
+                start_pred = start_logits[i].argmax().item()
+                end_scores = end_logits[i].clone()
+                end_scores[:start_pred] = float("-inf")
+                end_pred = end_scores.argmax().item()
+
+                # Decode predicted token span back to a string
+                pred_ids  = input_ids[i][start_pred: end_pred + 1].tolist()
+                pred_text = tokenizer.decode(pred_ids, skip_special_tokens=True)
+
+                em_scores.append(float(normalize_answer(pred_text) == normalize_answer(gold)))
+                f1_scores.append(f1_score(pred_text, gold))
+
+    model.train()
+
+    if not em_scores:
+        print("  No evaluable features found (all features had CLS start position).")
+        return {}
+
+    avg_em = 100.0 * sum(em_scores) / len(em_scores)
+    avg_f1 = 100.0 * sum(f1_scores) / len(f1_scores)
+
+    print(f"\nSQuAD Results ({len(em_scores)} features with answer in window):")
+    print(f"  Exact Match (EM): {avg_em:.2f}%")
+    print(f"  F1 Score:         {avg_f1:.2f}%")
+
+    return {"test/squad_em": round(avg_em, 4), "test/squad_f1": round(avg_f1, 4)}
+
+
+# =============================================================================
 # Trainers
 # =============================================================================
 
@@ -712,7 +844,8 @@ class MrBertTrainer(Trainer):
         ) if self.args.use_pi_controller else None
         # Cache pad token ID to avoid accessing self.tokenizer in the hot path,
         # which triggers a deprecation warning on every step in newer Transformers.
-        self._pad_token_id = self.processing_class.pad_token_id
+        _proc = getattr(self, "processing_class", None) or self.tokenizer
+        self._pad_token_id = _proc.pad_token_id
 
     def train(self, *args, **kwargs):
         import time
@@ -994,14 +1127,22 @@ def main():
     # Select trainer class based on model type
     TrainerClass = MrBertTrainer if args.model_type == "MrBERT" else BertTrainer
 
+    # Use processing_class (new API) if available, else fall back to tokenizer (old API)
+    import inspect
+    _tokenizer_kwarg = (
+        "processing_class"
+        if "processing_class" in inspect.signature(Trainer.__init__).parameters
+        else "tokenizer"
+    )
+
     trainer = TrainerClass(
         model=model,
         args=args,
         # Only pass train_dataset when actually training
         train_dataset=train_dataset if args.mode in ("training-only", "training-and-eval") else None,
         eval_dataset=eval_dataset,   # used for periodic validation during training
-        processing_class=tokenizer,  # replaces deprecated `tokenizer` kwarg
         data_collator=data_collator,
+        **{_tokenizer_kwarg: tokenizer},
     )
 
     # --- Train ---
@@ -1023,6 +1164,9 @@ def main():
                 print(f"  {k}: {v}")
             print("\nTest set evaluation complete!")
             print("=" * 60)
+            # For QA, compute standard SQuAD EM and F1 metrics
+            if args.task == "question_answering":
+                compute_squad_em_f1(args, model, test_dataset, tokenizer)
             if args.model_type == "MrBERT":
                 test_loader = DataLoader(
                     test_dataset,
@@ -1030,7 +1174,7 @@ def main():
                     shuffle=False,
                     collate_fn=data_collator,
                 )
-                print_deletion_samples(args, model, test_loader, tokenizer)
+                print_deletion_samples(args, model, test_loader, tokenizer, split="TEST")
         else:
             print("No test set available — skipping final test evaluation.")
 
@@ -1042,7 +1186,7 @@ def main():
                 shuffle=False,
                 collate_fn=data_collator,
             )
-            print_deletion_samples(args, model, eval_loader, tokenizer)
+            print_deletion_samples(args, model, eval_loader, tokenizer, split="VALIDATION")
 
     # --- Eval-only ---
     if args.mode == "eval-only":

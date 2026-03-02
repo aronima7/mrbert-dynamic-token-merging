@@ -4,6 +4,7 @@ mrbert/mrbert_checkpoints/*
 mrbert/bert_snli_test/*
 mrbert/mrbert_snli_test/*
 mrbert/snli_datasets/*
+mrbert/squad_datasets/*
 mrbert/wandb/*
 mrbert-alina/*
 mrt5/diagnostic_datasets/*

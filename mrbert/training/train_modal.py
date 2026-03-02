@@ -90,8 +90,10 @@ def train(
     use_pi_controller: bool = True,
     delete_gate_layer: int = 3,
     wandb_run_name: str = "",
+    wandb_project: str = "",
     controller_p: float = 0.01,
     use_softmax1: bool = True,
+    task: str = "sequence_classification",
     extra_args: list[str] | None = None,
 ):
     """
@@ -107,8 +109,10 @@ def train(
         use_pi_controller: Dynamically adjust deletion loss weight to hit target rate (default: True).
         delete_gate_layer: Which encoder layer (0-indexed) gets the delete gate (default: 3).
         wandb_run_name: W&B run name (default: auto-generated).
+        wandb_project: W&B project name (default: "mrbert"). Use to separate runs by dataset.
         controller_p: Proportional gain for PI controller (default: 0.01). Increase for faster convergence.
         use_softmax1: Use softmax1 (n+1 denominator) for attention, as recommended by MrT5 paper (default: True).
+        task: Training task — "sequence_classification" (SNLI) or "question_answering" (SQuAD).
         extra_args: Optional list of extra CLI args, e.g. ["--batch_size", "32"].
     """
     os.chdir("/workspace/training")
@@ -116,30 +120,80 @@ def train(
     run_label = wandb_run_name or f"mrbert-{model_type.lower()}-{mode}"
     print("=" * 60)
     print(f"RUN: {run_label}")
-    print(f"  model_type={model_type}, epochs={num_epochs}, max_steps={max_steps}")
+    print(f"  model_type={model_type}, task={task}, epochs={num_epochs}, max_steps={max_steps}")
     print(f"  target_deletion_rate={target_deletion_rate}, delete_gate_layer={delete_gate_layer}")
     print(f"  mode={mode}, pi_controller={use_pi_controller}")
     print("=" * 60)
-    # SNLI requires a preprocessed dataset. Generate it if missing.
-    snli_train_path = "/checkpoints/snli_datasets/snli-train.json"
-    if not os.path.exists(snli_train_path):
-        print("Preprocessing SNLI dataset...")
-        os.makedirs("/checkpoints/snli_datasets", exist_ok=True)
-        preprocess_cmd = [
-            sys.executable, "/workspace/data/preprocess_snli.py",
-            "--output_dir", "/checkpoints/snli_datasets",
+
+    if task == "sequence_classification":
+        # SNLI requires a preprocessed dataset. Generate it if missing.
+        snli_train_path = "/checkpoints/snli_datasets/snli-train.json"
+        if not os.path.exists(snli_train_path):
+            print("Preprocessing SNLI dataset...")
+            os.makedirs("/checkpoints/snli_datasets", exist_ok=True)
+            preprocess_cmd = [
+                sys.executable, "/workspace/data/preprocess_snli.py",
+                "--output_dir", "/checkpoints/snli_datasets",
+            ]
+            env = {**os.environ, "PYTHONPATH": "/workspace"}
+            result = subprocess.run(preprocess_cmd, env=env)
+            if result.returncode != 0:
+                raise RuntimeError(f"SNLI preprocessing exited with code {result.returncode}")
+        else:
+            print(f"SNLI dataset already exists at {snli_train_path}, skipping preprocessing.")
+
+    elif task == "question_answering":
+        # SQuAD requires a preprocessed dataset. Generate it if missing.
+        squad_train_path = "/checkpoints/squad_datasets/squad-train.json"
+        if not os.path.exists(squad_train_path):
+            print("Preprocessing SQuAD dataset...")
+            os.makedirs("/checkpoints/squad_datasets", exist_ok=True)
+            preprocess_cmd = [
+                sys.executable, "/workspace/data/preprocess_squad.py",
+                "--output_dir", "/checkpoints/squad_datasets",
+            ]
+            env = {**os.environ, "PYTHONPATH": "/workspace"}
+            result = subprocess.run(preprocess_cmd, env=env)
+            if result.returncode != 0:
+                raise RuntimeError(f"SQuAD preprocessing exited with code {result.returncode}")
+        else:
+            print(f"SQuAD dataset already exists at {squad_train_path}, skipping preprocessing.")
+
+    # Build task-specific args
+    if task == "sequence_classification":
+        task_args = [
+            "--task", "sequence_classification",
+            "--dataset_name", "local_snli",
+            "--local_snli_dir", "/checkpoints/snli_datasets",
         ]
-        env = {**os.environ, "PYTHONPATH": "/workspace"}
-        result = subprocess.run(preprocess_cmd, env=env)
-        if result.returncode != 0:
-            raise RuntimeError(f"SNLI preprocessing exited with code {result.returncode}")
+    elif task == "question_answering":
+        task_args = [
+            "--task", "question_answering",
+            "--dataset_name", "local_squad",
+            "--local_squad_dir", "/checkpoints/squad_datasets",
+            "--max_seq_length", "384",   # standard SQuAD context length
+        ]
     else:
-        print(f"SNLI dataset already exists at {snli_train_path}, skipping preprocessing.")
+        task_args = ["--task", task]
+
+    # Strip task/dataset args from DEFAULT_ARGS (they are task-specific)
+    default_args_filtered = []
+    skip_next = False
+    task_keys = {"--task", "--dataset_name", "--local_snli_dir", "--max_seq_length"}
+    for arg in DEFAULT_ARGS:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in task_keys:
+            skip_next = True
+            continue
+        default_args_filtered.append(arg)
 
     cmd = [
         sys.executable,
         "train_mrbert.py",
-        *DEFAULT_ARGS,
+        *default_args_filtered,
+        *task_args,
         "--model_type", model_type,
         "--output_dir", output_dir,
         "--max_steps", str(max_steps),
@@ -152,6 +206,8 @@ def train(
         cmd.append("--no_use_pi_controller")
     if wandb_run_name:
         cmd.extend(["--wandb_run_name", wandb_run_name])
+    if wandb_project:
+        cmd.extend(["--wandb_project", wandb_project])
     cmd.extend(["--controller_p", str(controller_p)])
     if not use_softmax1:
         cmd.append("--no_use_softmax1")
@@ -181,10 +237,12 @@ def main(
     use_pi_controller: bool = True,
     delete_gate_layer: int = 3,
     wandb_run_name: str = "",
+    wandb_project: str = "",
     controller_p: float = 0.01,
     use_softmax1: bool = True,
+    task: str = "sequence_classification",
 ):
     """
-    Entrypoint for `modal run train_modal.py [--model-type MrBERT|BERT] [--max-steps N] [--num-epochs N] [--target-deletion-rate F] [--mode ...] [--no-use-pi-controller] [--delete-gate-layer N] [--wandb-run-name NAME] [--controller-p F] [--no-use-softmax1]`.
+    Entrypoint for `modal run train_modal.py [--task sequence_classification|question_answering] [--model-type MrBERT|BERT] [--max-steps N] [--num-epochs N] [--target-deletion-rate F] [--mode ...] [--no-use-pi-controller] [--delete-gate-layer N] [--wandb-run-name NAME] [--wandb-project NAME] [--controller-p F] [--no-use-softmax1]`.
     """
-    train.remote(output_dir="/checkpoints", model_type=model_type, max_steps=max_steps, num_epochs=num_epochs, target_deletion_rate=target_deletion_rate, mode=mode, use_pi_controller=use_pi_controller, delete_gate_layer=delete_gate_layer, wandb_run_name=wandb_run_name, controller_p=controller_p, use_softmax1=use_softmax1)
+    train.remote(output_dir="/checkpoints", model_type=model_type, max_steps=max_steps, num_epochs=num_epochs, target_deletion_rate=target_deletion_rate, mode=mode, use_pi_controller=use_pi_controller, delete_gate_layer=delete_gate_layer, wandb_run_name=wandb_run_name, wandb_project=wandb_project, controller_p=controller_p, use_softmax1=use_softmax1, task=task)

@@ -1320,3 +1320,111 @@ AdamW Optimizer
   AdamW vs Adam: AdamW decouples weight decay from the gradient update (fixes a bug in the original Adam weight decay implementation). It's the standard choice for transformer fine-tuning and is what the
    original BERT paper used.
 ---
+❯ explain how is Q&A task and dataset training for BERT different from training with SNLI?                                                                                                                 
+                                                                                                                                                                                                         
+⏺ Task objective                                                                                                                                                                                           
+                                                                                                                                                                                                           
+  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────┐       
+  │                                                 SNLI                                                 │                                          SQuAD                                          │
+  ├──────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤       
+  │ Classify the relationship between two sentences into 3 labels (entailment / neutral / contradiction) │ Find the answer span in a context paragraph — predict the start and end token positions │       
+  ├──────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Single output: class label                                                                           │ Two outputs: start position + end position                                              │
+  └──────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Model head
+
+  - SNLI uses BertForSequenceClassification — a linear layer on top of the [CLS] token: hidden[CLS] → 3 logits
+  - SQuAD uses BertForQuestionAnswering — a linear layer applied to every token: hidden[all tokens] → 2 logits per token (start score, end score)
+
+  ---
+  Input format
+
+  - SNLI: [CLS] premise [SEP] hypothesis [SEP] — always fits in 128 tokens
+  - SQuAD: [CLS] question [SEP] context [SEP] — context can be very long (500+ tokens), so the context is split into overlapping 384-token windows with stride 128. One example can become multiple
+  training features.
+
+  ---
+  Labels
+
+  - SNLI: a single integer (0, 1, or 2)
+  - SQuAD: two integers — start_positions and end_positions — the token indices where the answer begins and ends in the context window. If the answer falls outside a window, both are set to 0 ([CLS]).
+
+  ---
+  Loss
+
+  - SNLI: cross-entropy over 3 classes
+  - SQuAD: average of two cross-entropy losses — one for start position, one for end position — both computed over all token positions in the sequence
+
+  ---
+  Evaluation metric
+
+  - SNLI: accuracy (fraction of correctly classified pairs)
+  - SQuAD: standard metrics are Exact Match (EM) and F1 over answer tokens — but our current MrBertTrainer only logs accuracy (argmax of start/end logits vs. ground truth), which is a rough proxy. True
+  SQuAD EM/F1 requires post-processing to reconstruct answer strings from predicted token spans.
+
+  ---
+  Dataset size
+
+  ┌────────────────┬─────────┬──────────────────────────────────────────┐
+  │                │  SNLI   │                  SQuAD                   │
+  ├────────────────┼─────────┼──────────────────────────────────────────┤
+  │ Train examples │ 549,367 │ 87,599 (→ ~88k features after windowing) │
+  ├────────────────┼─────────┼──────────────────────────────────────────┤
+  │ Validation     │ 9,842   │ 10,570 (→ ~10.8k features)               │
+  ├────────────────┼─────────┼──────────────────────────────────────────┤
+  │ Test           │ 9,824   │ none (validation reused)                 │
+  └────────────────┴─────────┴──────────────────────────────────────────┘
+---
+  preprocess_squad.py — saves answer_text (original answer string) in every feature. Features where the answer was outside the context window get "".                                                      
+                                                           
+  train_mrbert.py — new compute_squad_em_f1() function that:                                                                                                                                               
+  - Skips features where start_positions == 0 (answer was outside the window during preprocessing)                                                                                                       
+  - Predicts start/end span, constrains end ≥ start                                                                                                                                                      
+  - Decodes predicted tokens to string via tokenizer
+  - Normalizes both strings (lowercase, strip articles/punctuation/whitespace)
+  - Computes EM (exact string match) and F1 (token overlap)
+  - Called automatically after test evaluation when --task question_answering
+---
+❯ what are the other additional BERT tasks to evaluate on?                                                                                                                                                 
+                                                                                                                                                                                                         
+⏺ For a CS224N project comparing MrBERT vs BERT, the standard benchmarks are the GLUE tasks that BERT was originally evaluated on:                                                                         
+                                                                                                                                                                                                           
+  Already implemented (task=sequence_classification):                                                                                                                                                      
+  - SNLI — Natural Language Inference (you're running this)                                                                                                                                              
+                                                                                                                                                                                                           
+  High value to add:                                                                                                                                                                                       
+  - SST-2 (GLUE) — Sentiment classification, single sentence. Simple, fast to run. --dataset_name glue --dataset_config sst2
+  - MNLI (GLUE) — Multi-genre NLI, similar to SNLI but harder and more diverse. --dataset_name glue --dataset_config mnli
+  - QQP (GLUE) — Quora question pair similarity. --dataset_name glue --dataset_config qqp
+
+  Already implemented (task=question_answering):
+  - SQuAD — (you're adding this)
+
+  Other standard tasks (already supported in the code):
+  - CoNLL-2003 (task=token_classification) — Named Entity Recognition. Tests whether MrBERT's deletion hurts token-level predictions, which is a natural stress test since deleting tokens directly affects
+   token classification.
+  - SQuAD v2 — adds unanswerable questions on top of SQuAD v1. --dataset_name rajpurkar/squad_v2
+
+  ---
+  Recommendation for your paper:
+
+  The most compelling set for comparing MrBERT vs BERT is:
+
+  ┌────────────────┬───────────────────────────────────────────────────────────────────────────────────┐
+  │      Task      │                                        Why                                        │
+  ├────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ **SNLI**       │ NLI, you already have it                                                          │
+  ├────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ SST-2          │ Simple classification baseline, fast to run                                       │
+  ├────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ **SQuAD**      │ QA, tests span prediction under deletion                                          │
+  ├────────────────┼───────────────────────────────────────────────────────────────────────────────────┤
+  │ CoNLL-2003 NER │ Token classification — hardest stress test for deletion since every token matters │
+  └────────────────┴───────────────────────────────────────────────────────────────────────────────────┘
+
+  This covers 4 different task types and matches what MrT5 evaluated on (classification + span prediction + token-level tasks).
+---
+Use W&B Reports — create a Report that pulls charts from multiple projects into one view. This is the recommended way to compare runs across projects without moving them.                            
+---
