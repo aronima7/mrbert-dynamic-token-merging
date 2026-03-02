@@ -804,7 +804,7 @@ def print_deletion_samples(args, model, eval_dataloader, tokenizer, n_samples=20
     model.train()
 
 
-def evaluate(args, model, eval_dataloader, tokenizer, step=None):
+def evaluate(args, model, eval_dataloader, tokenizer, step=None, prefix="eval"):
     """Run evaluation and return metrics. Optionally logs to W&B."""
     model.eval()
     total_loss = 0
@@ -847,10 +847,10 @@ def evaluate(args, model, eval_dataloader, tokenizer, step=None):
     model.train()
 
     metrics = {
-        "eval/loss": round(total_loss / num_batches, 4),
-        "eval/accuracy": round(total_accuracy / num_batches, 4),
-        "eval/percent_deleted_tokens": round(total_deletion_rate / num_batches, 4),
-        "eval/avg_seq_len": round(total_seq_len / num_batches, 2),
+        f"{prefix}/loss": round(total_loss / num_batches, 4),
+        f"{prefix}/accuracy": round(total_accuracy / num_batches, 4),
+        f"{prefix}/percent_deleted_tokens": round(total_deletion_rate / num_batches, 4),
+        f"{prefix}/avg_seq_len": round(total_seq_len / num_batches, 2),
     }
 
     print(f"\nEval results:")
@@ -904,8 +904,8 @@ def evaluate(args, model, eval_dataloader, tokenizer, step=None):
                 gate_layer_index=args.delete_gate_layer,
             )
             print(f"    theoretical compute saved (MACs, Appendix C): ~{compute_saved * 100:.1f}%")
-            metrics["eval/compute_saved_pct"] = round(compute_saved * 100, 2)
-            metrics["eval/dropped_words_pct"] = round(
+            metrics[f"{prefix}/compute_saved_pct"] = round(compute_saved * 100, 2)
+            metrics[f"{prefix}/dropped_words_pct"] = round(
                 agg["dropped_by_type"]["word"] / max(agg["avg_dropped"], 1e-6), 4
             )
 
@@ -1146,11 +1146,10 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
                 if not args.disable_wandb:
                     wandb.log({
                         "epoch": epoch + 1,
-                        "loss": round(avg_loss, 4),
-                        "cross_entropy_loss": round(avg_task_loss, 4),
-                        "delete_gate_loss": round(avg_deletion_loss, 4),
-                        "total_loss": round(avg_loss, 4),
-                        "accuracy": round(avg_accuracy, 4),
+                        "train/loss": round(avg_loss, 4),
+                        "train/cross_entropy_loss": round(avg_task_loss, 4),
+                        "train/delete_gate_loss": round(avg_deletion_loss, 4),
+                        "train/accuracy": round(avg_accuracy, 4),
                         "new_seq_len": round(avg_seq_len, 2),
                         "percent_deleted_tokens": round(avg_del_pct_all, 4),
                         "percent_non_pad_deleted_tokens": round(avg_del_pct_non_pad, 4),
@@ -1174,13 +1173,17 @@ def train(args, model, train_dataloader, eval_dataloader, tokenizer):
                 total_accuracy = 0
                 total_seq_len = 0
             
+            # Periodic validation evaluation
+            if eval_dataloader is not None and global_step % args.eval_steps == 0:
+                evaluate(args, model, eval_dataloader, tokenizer, step=global_step)
+
             # Save checkpoint
             if global_step % args.save_steps == 0:
                 save_path = f"{args.output_dir}/checkpoint-{global_step}"
                 print(f"\nSaving checkpoint to {save_path}")
                 model.save_pretrained(save_path)
                 tokenizer.save_pretrained(save_path)
-            
+
             # Check max steps
             if args.max_steps > 0 and global_step >= args.max_steps:
                 break
@@ -1282,13 +1285,36 @@ def main():
         )
     except (KeyError, TypeError):
         pass  # No validation set
-    
+
+    test_dataloader = None
+    try:
+        test_split = "test_matched" if (args.dataset_name == "glue" and args.dataset_config == "mnli") else "test"
+        test_dataset = tokenized_dataset[test_split]
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+        )
+    except (KeyError, TypeError):
+        pass  # No test set
+
     # Train / eval based on --mode
     global_step = 0
     if args.mode in ("training-only", "training-and-eval"):
         model, global_step = train(args, model, train_dataloader, eval_dataloader, tokenizer)
         print("\nTraining complete!")
         print("=" * 60)
+
+        # Final evaluation on test set after training
+        if test_dataloader is not None:
+            print("\nRunning final evaluation on test set...")
+            print("=" * 60)
+            evaluate(args, model, test_dataloader, tokenizer, step=global_step, prefix="test")
+            print("\nTest set evaluation complete!")
+            print("=" * 60)
+        else:
+            print("No test set available — skipping final test evaluation.")
 
     if args.mode in ("eval-only", "training-and-eval"):
         if eval_dataloader is None:

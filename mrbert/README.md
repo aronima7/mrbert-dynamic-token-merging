@@ -879,3 +879,68 @@ Analysis:
   │ accuracy_vs_compute.pdf │ Core result — "What accuracy do you give up for each unit of compute saved?" — this is the figure that goes in the paper │
   └─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ---
+❯ how is mrbert/training/train_mrbert.py different from mrt5/training/trainer.py in terms of implementation and use of Transformers library import Trainer? 
+
+⏺ Here's the key comparison:
+
+  ---
+  Trainer type
+
+  ┌───────────────────┬───────────────────────────────────┬──────────────────────────────────────────────────────────────┐
+  │                   │          train_mrbert.py          │                       mrt5/trainer.py                        │
+  ├───────────────────┼───────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ Approach          │ Custom training loop from scratch │ Subclasses HuggingFace Trainer                               │
+  ├───────────────────┼───────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ HF Trainer import │ Not used                          │ from transformers import Trainer — 11 subclasses built on it │
+  └───────────────────┴───────────────────────────────────┴──────────────────────────────────────────────────────────────┘
+
+  ---
+  Training loop
+
+  MrBERT manually controls everything:
+  for epoch in ...:
+      for batch in dataloader:
+          outputs = model(**batch)
+          loss.backward()
+          clip_grad_norm_(...)
+          optimizer.step()
+          scheduler.step()
+
+  MrT5 delegates to HF Trainer and only overrides compute_loss():
+  class MrT5Trainer(T5Trainer):
+      def compute_loss(self, model, inputs, ...):
+          # custom deletion loss logic here
+          # parent handles backward, optimizer, scheduling
+
+  ---
+  Deletion loss
+
+  MrBERT — standalone compute_deletion_loss() function called manually in the loop; single loss type (gate_mean).
+
+  MrT5 — __compute_loss() method inside the trainer class; supports multiple loss functions (gate_mean_loss, clamped_logits_mean, gate_var_loss, entropy regularization).
+
+  ---
+  PI-controller
+
+  Both implement it, but differently:
+  - MrBERT: external PIController class, standard P+I update
+  - MrT5: inline inside the trainer using exponential smoothing for the P term (p_acc = 0.9*p_acc + 0.1*p*err)
+
+  ---
+  Evaluation
+
+  - MrBERT: manual evaluate() function with torch.no_grad(), called periodically or post-training
+  - MrT5: runs the model in two passes during eval — once with soft deletion, once with hard deletion — to compare both modes
+
+  ---
+  Optimizer
+
+  - MrBERT: explicitly creates two param groups with separate LRs (--learning_rate for BERT weights, --delete_gate_lr for gate params)
+  - MrT5: uses HF Trainer's default optimizer — no separate gate LR
+
+  ---
+  Key tradeoff
+
+  MrBERT's custom loop gives fine-grained control (separate gate LR, custom logging, multi-task support) at the cost of more boilerplate. MrT5 gets checkpointing, distributed training, mixed precision,
+  and evaluation for free from HF Trainer, but has less explicit control over the training loop.
+---

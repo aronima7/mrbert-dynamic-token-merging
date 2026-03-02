@@ -77,4 +77,6 @@ Cost For Run:
 GPU: A100
 Eval results: 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+4.
+modal run --detach train_modal.py --model-type MrBERT --max-steps -1 --num-epochs 3 --target-deletion-rate 0.0 --mode training-and-eval --wandb-run-name run6-mrbert-softmax1-0pct-3epochs
 
