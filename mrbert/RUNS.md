@@ -58,11 +58,23 @@ Another run to try: PI controller off. With the PI controller off, deletion_loss
 3. 
 a. (MrBERT 5 epochs; 30% target deletion rate; softmax1 = true)
 modal run --detach train_modal.py --model-type MrBERT --max-steps -1 --num-epochs 5 --target-deletion-rate 0.3 --mode training-and-eval --wandb-run-name run3-mrbert-softmax1-5epochs
+Time Taken For Run: 
+Cost For Run: 
+GPU: A100
+Eval results: 
 
 b. (MrBERT 5 epochs; 50% target deletion rate; softmax1 = true)
 modal run --detach train_modal.py --model-type MrBERT --max-steps -1 --num-epochs 5 --target-deletion-rate 0.5 --mode training-and-eval --wandb-run-name run4-mrbert-softmax1-50pct-5epochs
+Time Taken For Run: 
+Cost For Run: 
+GPU: A100
+Eval results: 
 
 c. (MrBERT 5 epochs; no PI controller; softmax1 = true)
 modal run --detach train_modal.py --model-type MrBERT --max-steps -1 --num-epochs 5 --no-use-pi-controller --mode training-and-eval --wandb-run-name run5-mrbert-softmax1-no-pi-5ep
+Time Taken For Run: 
+Cost For Run: 
+GPU: A100
+Eval results: 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 

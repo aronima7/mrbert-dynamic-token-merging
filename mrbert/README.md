@@ -765,3 +765,117 @@ To disable it explicitly:
 Modal logs:
 look for 'Starting training...' to see the initial params for training run
 look for ''
+---
+Analysis:
+
+⏺ Three scripts created under mrbert/analysis/. Here's what each does and how they connect:
+
+  ---
+  Workflow
+
+  # Step 1 — run model over SNLI test, save gate decisions
+  python analysis/get_deletion_patterns.py \
+      --model_path ./mrbert_checkpoints/final \
+      --local_snli_dir ./snli_datasets \
+      --sample_size 1000 \
+      --output_dir ./analysis/deletion_patterns
+
+  # Step 2 — analyse patterns from step 1
+  python analysis/deletion_pattern_analysis.py \
+      --input_file ./analysis/deletion_patterns/final_test.json \
+      --output_dir ./analysis/figures
+
+  # Step 3 — compute/plot theoretical MACs savings (no model needed)
+  python analysis/compute_savings.py
+
+  ---
+  Script breakdown
+
+  Script: get_deletion_patterns.py
+  MrT5 equivalent: get_deletion_patterns.py
+  What it does: Runs MrBertForSequenceClassification over SNLI; saves per-token gate_values, deletion_mask, prediction, label to JSON
+  ────────────────────────────────────────
+  Script: compute_savings.py
+  MrT5 equivalent: compute_savings.ipynb
+  What it does: BERT-specific MACs formula (encoder-only, no decoder); plots relative compute vs deletion ratio; two figures: gate@layer3 and gate@layer 1/3/6/9
+  ────────────────────────────────────────
+  Script: deletion_pattern_analysis.py
+  MrT5 equivalent: deletion_pattern_analysis.ipynb
+  What it does: Loads JSON from step 1; colored terminal output; deletion rates by token type; top most/least deleted tokens; SNLI-specific premise vs hypothesis deletion rates; saves bar charts
+
+  Key SNLI-specific addition not in MrT5: the premise vs hypothesis breakdown — whether MrBERT preferentially deletes more from the premise or hypothesis segment.
+
+✻ Churned for 4m 31s
+
+❯ how and when do you recommend running analysis, ie, do I need to run this for each run or only the final run?                                                                                           
+                                                                                                                
+⏺ Run analysis on selected runs only, not every run. Here's the reasoning and a concrete recommendation:                                                                                                  
+                                                                                                                                                                                                        
+  ---                                                                                                                                                                                                     
+  What analysis tells you vs what W&B already tells you
+                                                                                                                                                                                                          
+  W&B already gives you the key training signals during a run: accuracy, loss, deletion rate, gate average/std, alpha. You don't need the analysis scripts to decide whether a run is good.               
+
+  The analysis scripts answer different questions:
+  - Which tokens is the gate choosing to delete? (semantic interpretation)
+  - Is the gate deleting more from premise or hypothesis? (SNLI-specific behaviour)
+  - What is the actual compute saving at a given deletion rate? (paper numbers)
+
+  These are paper-writing questions, not training decisions.
+
+  ---
+  Recommended timing
+
+  compute_savings.py — run once, now. It requires no model, just the deletion rate numbers from your runs. You can already plug in 30% and 50% to get the theoretical savings figures for your paper.
+
+  python analysis/compute_savings.py
+
+  get_deletion_patterns.py + deletion_pattern_analysis.py — run on two or three specific checkpoints at the end:
+
+  ┌──────────────────────────────────────┬──────────────────┬─────────────────────────────────────────────────────────────────────────┐
+  │                 When                 │ Which checkpoint │                                   Why                                   │
+  ├──────────────────────────────────────┼──────────────────┼─────────────────────────────────────────────────────────────────────────┤
+  │ After your best MrBERT run converges │ Final checkpoint │ Primary results for the paper — what does the trained gate actually do? │
+  ├──────────────────────────────────────┼──────────────────┼─────────────────────────────────────────────────────────────────────────┤
+  │ After the 50% deletion run           │ Final checkpoint │ Compare deletion patterns at different rates                            │
+  ├──────────────────────────────────────┼──────────────────┼─────────────────────────────────────────────────────────────────────────┤
+  │ Optionally: no-PI-controller run     │ Final checkpoint │ Does the gate learn a different deletion strategy without PI pressure?  │
+  └──────────────────────────────────────┴──────────────────┴─────────────────────────────────────────────────────────────────────────┘
+
+  **Do not run per run. The patterns won't be interpretable until the model has converged. A partially trained gate (e.g. step 10k) will show near-random deletion and tell you nothing meaningful.**
+
+  ---
+  **Concrete recommendation**
+
+  Right now you have three runs in flight (30% softmax1, 50% softmax1, no-PI). Once they finish:
+
+  1. Run compute_savings.py immediately — gives you the efficiency numbers
+  2. Pick the best-accuracy run as your primary and run get_deletion_patterns.py → deletion_pattern_analysis.py on it
+  3. If the 50% run performs acceptably, run analysis on that too to show the accuracy-efficiency curve has an interpretable gate at each operating point
+  4. Skip analysis on the no-PI run unless its accuracy is competitive — it's mainly an ablation data point, not a primary result
+---
+⏺ Now you have three figures. Here's the usage flow:
+
+  Right now (no run data needed):                                                                                                                                                                         
+  python analysis/compute_savings.py
+  # → macs_relative.pdf, macs_by_gate_layer.pdf                                                                                                                                                           
+                                                                                                                                                                                                        
+  After your runs finish (plug in real eval numbers):
+  python analysis/compute_savings.py \
+    --runs "BERT,0.9055,0.0" \
+           "MrBERT-30%,<acc>,0.32" \
+           "MrBERT-50%,<acc>,0.50"
+  # → all three figures including accuracy_vs_compute.pdf
+
+  What each figure shows:
+
+  ┌─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │         Figure          │                                              What it answers for the paper                                               │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ macs_relative.pdf       │ "How much compute does MrBERT save at a given deletion rate?" — the theoretical efficiency curve                         │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ macs_by_gate_layer.pdf  │ "Does it matter which layer the gate is at?" — motivation for the layer 3 choice                                         │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ accuracy_vs_compute.pdf │ Core result — "What accuracy do you give up for each unit of compute saved?" — this is the figure that goes in the paper │
+  └─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+---
