@@ -110,7 +110,7 @@ pip install transformers==4.39.1
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `delete_gate_layer` | int | 2 | Which encoder layer to place the delete gate (0-indexed) |
+| `delete_gate_layer` | int | 3 | Which encoder layer to place the delete gate (0-indexed) |
 | `deletion_type` | str | "scaled_sigmoid" | Type of delete gate: `"scaled_sigmoid"`, `"log_sigmoid"`, `"random"`, `"fixed"` |
 | `sigmoid_mask_scale` | float | -10.0 | Scale for sigmoid activation (more negative = stronger deletion) |
 | `deletion_threshold` | float | None | Threshold for hard deletion. If None, uses soft deletion |
@@ -123,6 +123,8 @@ pip install transformers==4.39.1
 
 ## Training
 
+The training script uses the HuggingFace `Trainer` class. All standard `TrainingArguments` flags apply directly alongside MrBERT-specific fields.
+
 ```bash
 # Masked Language Modeling (default)
 python train_mrbert.py \
@@ -133,16 +135,30 @@ python train_mrbert.py \
     --num_epochs 3 \
     --batch_size 16 \
     --learning_rate 5e-5 \
-    --target_deletion_rate 0.3 \
-    --deletion_loss_weight 0.1
+    --target_deletion_rate 0.3
 
-# Sequence Classification (e.g., SST-2)
-python train_mrbert.py \
+# Sequence Classification on SNLI (MrBERT with delete gate)
+python training/train_mrbert.py \
+    --model_type MrBERT \
     --task sequence_classification \
-    --dataset_name glue \
-    --dataset_config sst2 \
-    --output_dir ./mrbert_sst2 \
-    --num_epochs 3
+    --dataset_name local_snli \
+    --local_snli_dir ./snli_datasets \
+    --output_dir ./mrbert_snli \
+    --num_epochs 3 \
+    --batch_size 32 \
+    --target_deletion_rate 0.3 \
+    --mode training-and-eval
+
+# Baseline BERT (no delete gate)
+python training/train_mrbert.py \
+    --model_type BERT \
+    --task sequence_classification \
+    --dataset_name local_snli \
+    --local_snli_dir ./snli_datasets \
+    --output_dir ./bert_snli \
+    --num_epochs 3 \
+    --batch_size 32 \
+    --mode training-and-eval
 
 # Token Classification (e.g., NER)
 python train_mrbert.py \
@@ -155,23 +171,70 @@ python train_mrbert.py \
     --task question_answering \
     --dataset_name squad \
     --output_dir ./mrbert_squad
+
+# Quick smoke test (100 steps, no W&B)
+python train_mrbert.py \
+    --max_steps 100 \
+    --logging_steps 10 \
+    --output_dir ./test_run \
+    --disable_wandb
 ```
 
 ### Training Arguments
 
+All standard `TrainingArguments` flags (e.g. `--per_device_train_batch_size`, `--num_train_epochs`, `--eval_steps`) work alongside the MrBERT-specific fields below. Backward-compat aliases `--batch_size` and `--num_epochs` are also supported.
+
+**Model**
+
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--task` | mlm | Task: `mlm`, `sequence_classification`, `token_classification`, `question_answering` |
-| `--model_name` | bert-base-uncased | Base BERT model |
-| `--delete_gate_layer` | 2 | Delete gate placement |
-| `--deletion_type` | scaled_sigmoid | Delete gate type |
-| `--target_deletion_rate` | 0.0 | Target deletion rate (0 = no deletion loss) |
-| `--deletion_loss_weight` | 0.1 | Weight for auxiliary deletion loss |
-| `--delete_gate_lr` | 1e-4 | Learning rate for delete gate (can be higher than base model) |
-| `--num_epochs` | 3 | Number of training epochs |
-| `--batch_size` | 16 | Batch size |
-| `--learning_rate` | 5e-5 | Learning rate |
-| `--max_seq_length` | 128 | Maximum sequence length |
+| `--model_type` | `MrBERT` | `MrBERT` (with delete gate) or `BERT` (baseline) |
+| `--model_name` | `bert-base-uncased` | Pretrained BERT model to initialise from |
+| `--delete_gate_layer` | `3` | Encoder layer that emits the delete gate (0-indexed) |
+| `--deletion_type` | `scaled_sigmoid` | Gate type: `scaled_sigmoid`, `log_sigmoid`, `random`, `fixed` |
+| `--use_softmax1` | `True` | Use softmax1 attention (recommended by MrT5 paper); `--no_use_softmax1` to disable |
+
+**Dataset**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--task` | `mlm` | `mlm`, `sequence_classification`, `token_classification`, `question_answering` |
+| `--dataset_name` | `wikitext` | HuggingFace dataset name, or `local_snli` / `local_mc4` for local files |
+| `--dataset_config` | `wikitext-2-raw-v1` | Dataset config/subset (e.g. `sst2` for GLUE) |
+| `--local_snli_dir` | `snli_datasets` | Directory with pre-processed SNLI NDJSON files |
+| `--max_seq_length` | `512` | Max token sequence length |
+
+**Training (HuggingFace TrainingArguments)**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--num_train_epochs` / `--num_epochs` | `3` | Number of training epochs |
+| `--per_device_train_batch_size` / `--batch_size` | `8` | Per-device batch size |
+| `--learning_rate` | `5e-5` | Learning rate (single LR for all parameters) |
+| `--max_steps` | `-1` | Override max steps; `-1` = run full epochs |
+| `--logging_steps` | `500` | Log metrics every N steps |
+| `--eval_steps` | `500` | Run validation every N steps |
+| `--save_steps` | `500` | Save checkpoint every N steps |
+
+**Deletion Loss / PI Controller**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--target_deletion_rate` | `0.4` | Target fraction of non-pad tokens to delete |
+| `--deletion_loss_weight` | `0.0` | Initial deletion loss coefficient α₀ |
+| `--use_pi_controller` | `True` | Dynamically adjust α to hit target rate; `--no_use_pi_controller` to disable |
+| `--controller_p` | `0.5` | Proportional gain for the PI controller |
+| `--controller_i` | `5e-5` | Integral gain for the PI controller |
+| `--regularizer_delay` | `0` | Steps to train on task loss only before enabling deletion regulariser |
+
+**Mode / W&B**
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--mode` | `training-only` | `training-only`, `training-and-eval`, `eval-only` |
+| `--wandb_run_name` | auto | W&B run name (default: auto-generated) |
+| `--disable_wandb` | `False` | Disable W&B logging entirely |
+
 ---
 
 ## Evaluation
@@ -943,4 +1006,95 @@ Analysis:
 
   MrBERT's custom loop gives fine-grained control (separate gate LR, custom logging, multi-task support) at the cost of more boilerplate. MrT5 gets checkpointing, distributed training, mixed precision,
   and evaluation for free from HF Trainer, but has less explicit control over the training loop.
+---
+Refactored mrBert
+
+  Flags Modal passes via DEFAULT_ARGS and cmd:
+
+  ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────┐
+  │                                                         Flag                                                          │                              Status                               │
+  ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┤
+  │ --task, --dataset_name, --local_snli_dir                                                                              │ ✓ defined in MrBertTrainingArguments                              │
+  ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┤
+  │ --num_epochs, --batch_size                                                                                            │ ✓ backward-compat aliases preserved                               │
+  ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┤
+  │ --learning_rate, --logging_steps, --save_steps, --max_steps, --output_dir                                             │ ✓ inherited from TrainingArguments                                │
+  ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┤
+  │ --target_deletion_rate, --deletion_loss_weight, --controller_p, --controller_i, --regularizer_delay, --max_seq_length │ ✓ defined in MrBertTrainingArguments                              │
+  ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┤
+  │ --model_type, --mode, --delete_gate_layer, --wandb_run_name                                                           │ ✓ defined in MrBertTrainingArguments                              │
+  ├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┤
+  │ --no_use_pi_controller, --no_use_softmax1                                                                             │ ✓ HfArgumentParser auto-generates --no_* variants for bool fields │
+  └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────┘
+
+  The only flag that was removed is --delete_gate_lr, which Modal never passed anyway.
+
+  So modal run train_modal.py works exactly as before.
+---
+⏺ Not the same. Here's the comparison:                                                                                                                                                                     
+                                                                                                                                                                                                           
+  ┌───────────────────────────┬────────────────┬────────────────────────────────────────┐                                                                                                                  
+  │      Hyperparameter       │ MrBERT default │              MrT5 default              │                                                                                                                  
+  ├───────────────────────────┼────────────────┼────────────────────────────────────────┤                                                                                                                  
+  │ controller_p              │ 0.5            │ 0.5 ✓                                  │                                                                                                                  
+  ├───────────────────────────┼────────────────┼────────────────────────────────────────┤
+  │ controller_i              │ 5e-5           │ 1e-5 ✗                                 │
+  ├───────────────────────────┼────────────────┼────────────────────────────────────────┤
+  │ target_deletion_rate      │ 0.4            │ None (must be set explicitly) ✗        │
+  ├───────────────────────────┼────────────────┼────────────────────────────────────────┤
+  │ deletion_loss_weight (α₀) │ 0.0            │ 0.0 ✓                                  │
+  ├───────────────────────────┼────────────────┼────────────────────────────────────────┤
+  │ regularizer_delay         │ 0              │ None (disabled by default) ✗           │
+  ├───────────────────────────┼────────────────┼────────────────────────────────────────┤
+  │ learning_rate             │ 5e-5           │ not set in trainer (passed externally) │
+  └───────────────────────────┴────────────────┴────────────────────────────────────────┘
+
+  The meaningful differences:
+
+  - controller_i: MrBERT uses 5e-5, MrT5 uses 1e-5. MrBERT's integral gain is 5× larger, meaning the deletion rate will ramp up faster.
+  - target_deletion_rate: MrT5 defaults to None (PI controller disabled unless explicitly set). MrBERT always has it on at 0.4.
+  - regularizer_delay: MrT5 defaults to None (no delay). MrBERT defaults to 0 (no delay, but the field exists). In practice the same, but the Modal script overrides it to 1000.
+
+❯ what is the default learning rate for baseline BERT?                                                                                                                                                     
+                                                       
+⏺ Same as MrBERT — 5e-5, inherited from TrainingArguments. There's no separate default for the BERT baseline; both use the same learning_rate field in MrBertTrainingArguments.  
+---
+⏺ MrBertTrainer (MrBERT):                                                                                                                                                                                  
+                                                                                                                                                                                                           
+  Training (train/):                                                                                                                                                                                       
+  - train/loss — combined loss (task + α × deletion)                                                                                                                                                       
+  - train/cross_entropy_loss — task loss only                                                                                                                                                              
+  - train/delete_gate_loss — deletion regularisation loss                                                                                                                                                  
+  - train/accuracy — fraction of correct predictions
+  - train/percent_deleted_tokens — % of all tokens with gate < threshold
+  - train/percent_non_pad_deleted_tokens — % of non-pad tokens deleted
+  - train/delete_gate_average — mean gate value across batch
+  - train/delete_gate_std — std of gate values
+  - train/delete_gate_max_value — mean per-sequence max gate value
+  - train/delete_gate_min_value — mean per-sequence min gate value
+  - train/delete_gate_loss_coeff — current α from PI controller
+  - train/new_seq_len — effective sequence length after deletion
+  - epoch_progress — e.g. "1.32/3"
+  - elapsed_time_hrs
+
+  Eval (eval/):
+  - eval/loss
+  - eval/cross_entropy_loss
+  - eval/accuracy
+  - eval/percent_deleted_tokens
+  - eval/percent_non_pad_deleted_tokens
+  - eval/delete_gate_average
+  - eval/new_seq_len
+
+  Test set uses the same set but prefixed test/ (via metric_key_prefix="test" in trainer.evaluate()).
+
+  ---
+  BertTrainer (baseline BERT):
+  - train/cross_entropy_loss, train/accuracy
+  - eval/cross_entropy_loss, eval/accuracy
+---
+Evaluating: 100%|██████████| 308/308 [00:17<00:00, 17.25it/s] loss=0.7980, acc=0.656]
+---
+TODO: get rid of --training-and-eval and --eval-only arg. instead keep --training-only (default) - this runs training + validation during training + test after training completes and --test-only - runs    
+  test only  
 ---

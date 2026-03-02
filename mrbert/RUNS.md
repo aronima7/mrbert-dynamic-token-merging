@@ -77,6 +77,17 @@ Cost For Run:
 GPU: A100
 Eval results: 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-4.
+4. (MrBERT 3 epochs; 0% target deletion rate; softmax1 = true) -> **try to get the same accuracy as BERT baseline**
 modal run --detach train_modal.py --model-type MrBERT --max-steps -1 --num-epochs 3 --target-deletion-rate 0.0 --mode training-and-eval --wandb-run-name run6-mrbert-softmax1-0pct-3epochs
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+### Refactored MrBERT
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+5. (MrBERT 3 epochs; 0% target deletion rate; softmax1 = true) -> try to get the same accuracy as BERT baseline
+modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.0 --mode training-and-eval --wandb-run-name run7-mrbert-softmax1-Trainer-0pct-3epochs
 
+6. (BERT 3 epochs; softmax1 = true) -> new BERT baseline after refactoring
+modal run --detach train_modal.py --model-type BERT --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-run-name run8-bert-Trainer-baseline-3epochs
+
+7. (MrBERT 3 epochs; 30% target deletion rate; softmax1 = true) 
+modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --mode training-and-eval --wandb-run-name run9-mrbert-softmax1-Trainer-30pct-3epochs
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
