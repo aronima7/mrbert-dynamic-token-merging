@@ -236,9 +236,11 @@ class MrBertTrainingArguments(TrainingArguments):
         if self.num_epochs is not None:
             self.num_train_epochs = float(self.num_epochs)
 
-        # Default to step-based periodic evaluation so validation runs every eval_steps
-        # (TrainingArguments defaults evaluation_strategy to "no")
-        if getattr(self, "evaluation_strategy", "no") == "no":
+        # Default to step-based periodic evaluation so validation runs every eval_steps.
+        # eval_strategy is the current field name (Transformers >=4.41); evaluation_strategy
+        # is the legacy alias. Set both so this works across versions.
+        if getattr(self, "eval_strategy", "no") == "no":
+            self.eval_strategy = "steps"
             self.evaluation_strategy = "steps"
 
         # Configure W&B reporting
@@ -835,6 +837,52 @@ def compute_squad_em_f1(args, model, test_dataset, tokenizer):
 
 
 # =============================================================================
+# compute_metrics helpers (returned values are logged as eval/<key> by Trainer)
+# =============================================================================
+
+def make_classification_compute_metrics():
+    """Return a compute_metrics fn for sequence classification (accuracy)."""
+    import numpy as np
+    def compute_metrics(eval_pred):
+        logits, labels = eval_pred
+        # MrBERT returns multiple outputs; Trainer stacks them all into predictions.
+        # The classification logits are always the first element.
+        if isinstance(logits, tuple):
+            logits = logits[0]
+        preds = np.argmax(logits, axis=-1)
+        return {"accuracy": float((preds == labels).mean())}
+    return compute_metrics
+
+
+def make_qa_compute_metrics():
+    """Return a compute_metrics fn for question answering (EM and F1).
+    The QA model outputs start/end logits; we take argmax and compare token spans.
+    This is a lightweight approximation — the full SQuAD eval (with detokenisation
+    and answer normalisation) is run separately via evaluate_squad() at the end.
+    """
+    import numpy as np
+    def compute_metrics(eval_pred):
+        # eval_pred.predictions is a tuple (start_logits, end_logits)
+        # eval_pred.label_ids is a tuple (start_positions, end_positions)
+        predictions, label_ids = eval_pred
+        if isinstance(predictions, tuple):
+            start_logits, end_logits = predictions[0], predictions[1]
+        else:
+            return {}
+        if isinstance(label_ids, tuple):
+            start_labels, end_labels = label_ids[0], label_ids[1]
+        else:
+            return {}
+        pred_starts = np.argmax(start_logits, axis=-1)
+        pred_ends   = np.argmax(end_logits,   axis=-1)
+        start_acc = float((pred_starts == start_labels).mean())
+        end_acc   = float((pred_ends   == end_labels).mean())
+        exact_match = float(((pred_starts == start_labels) & (pred_ends == end_labels)).mean())
+        return {"start_acc": start_acc, "end_acc": end_acc, "span_em": exact_match}
+    return compute_metrics
+
+
+# =============================================================================
 # Trainers
 # =============================================================================
 
@@ -1044,6 +1092,9 @@ class MrBertTrainer(Trainer):
         logs["elapsed_time"] = f"{h}h {m:02d}m {s:02d}s"
 
         self.metrics = self._init_metrics()
+        # Stash the last-flushed log dict so post-evaluate callers can re-log
+        # with a task-specific prefix (e.g. "test/") to W&B Summary.
+        self._last_logs = dict(logs)
         super().log(logs, *args, **kwargs)
 
 
@@ -1087,6 +1138,7 @@ class BertTrainer(Trainer):
         }
         logs.update(aggregated)
         self.metrics = self._init_metrics()
+        self._last_logs = dict(logs)
         super().log(logs, *args, **kwargs)
 
 
@@ -1179,6 +1231,12 @@ def main():
     # Select trainer class based on model type
     TrainerClass = MrBertTrainer if args.model_type == "MrBERT" else BertTrainer
 
+    # compute_metrics: values returned here are logged as eval/<key> by the Trainer
+    if args.task == "question_answering":
+        _compute_metrics = make_qa_compute_metrics()
+    else:
+        _compute_metrics = make_classification_compute_metrics()
+
     # Use processing_class (new API) if available, else fall back to tokenizer (old API)
     import inspect
     _tokenizer_kwarg = (
@@ -1193,6 +1251,7 @@ def main():
         # Only pass train_dataset when actually training
         train_dataset=train_dataset if args.mode in ("training-only", "training-and-eval") else None,
         eval_dataset=eval_dataset,   # used for periodic validation during training
+        compute_metrics=_compute_metrics,
         data_collator=data_collator,
         **{_tokenizer_kwarg: tokenizer},
     )
@@ -1219,6 +1278,27 @@ def main():
             print("=" * 60)
             # metric_key_prefix="test" prefixes all logged metrics with "test/"
             test_metrics = trainer.evaluate(eval_dataset=test_dataset, metric_key_prefix="test")
+            # trainer.evaluate() prefixes Trainer built-ins (eval_loss, eval_runtime, …) with
+            # "test/" automatically, but custom metrics (accuracy, new_seq_len, …) are flushed
+            # inside log() without a prefix. Re-log them explicitly so they appear in W&B
+            # Summary under "test/<metric>" and are easy to read from the Summary tab.
+            custom_keys = {
+                "accuracy", "cross_entropy_loss", "delete_gate_loss",
+                "percent_deleted_tokens", "percent_non_pad_deleted_tokens",
+                "delete_gate_average", "new_seq_len", "seq_len_reduction_pct",
+            }
+            last_logs = getattr(trainer, "_last_logs", {})
+            test_summary = {
+                f"test/{k}": v
+                for k, v in last_logs.items()
+                if k in custom_keys
+            }
+            if test_summary and not args.disable_wandb:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log(test_summary)
+            # Also merge into test_metrics so they appear in the console printout below
+            test_metrics.update(test_summary)
             print("\nTest set metrics:")
             for k, v in sorted(test_metrics.items()):
                 print(f"  {k}: {v}")

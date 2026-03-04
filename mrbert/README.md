@@ -1471,3 +1471,122 @@ Use W&B Reports — create a Report that pulls charts from multiple projects int
 
   The 100 training steps themselves at batch size 8 on CPU will still take ~12 minutes (100 × ~7s/step), but no eval overhead. If you want it faster, drop to --max_steps 20 — enough to confirm the gate fires and loss decreases.
 ---
+❯ what is the average seq length of the snli dataset. refer to snli_datasets/* folder
+
+⏺ Mean non-pad sequence length is ~27 tokens (27.1 train, 27.3 test), out of a max of 128. So SNLI sequences are quite short — the model is mostly processing padding. This also explains why the local dataset files only have ~1000 examples (these are the
+  preprocessed local copies, not the full SNLI).
+
+  This is the seq_len=27 default you'll see in compute_savings.py — it was set correctly to match the actual mean SNLI length.
+---
+❯ how is the seq_len_reduction_pct computed 
+  ⎿ Selected 1 lines from report.md in PyCharm
+
+⏺ The formula is:
+
+  seq_len_reduction_pct = (1 - new_seq_len / max_seq_length) * 100
+
+  Where:
+  - new_seq_len = average number of tokens with gate_value > deletion_threshold (-15.0) across the batch — i.e. tokens the gate decided to keep
+  - max_seq_length = 128 (the padded tensor length, not the mean actual length)
+
+  The important subtlety: it's computed relative to max_seq_length=128, not the mean actual non-pad length (~27). So if the gate keeps 27 tokens (all real tokens, nothing deleted), seq_len_reduction_pct = (1 - 27/128) * 100 = 78.9% — even with zero actual
+  deletion.
+
+  This means the reported seq_len_reduction_pct in W&B includes padding reduction, not just learned deletion. For the run M result in your table (seq_len_reduction_pct: 96.31, new_seq_len: 18.87), the gate is keeping ~18.9 tokens out of 128, but the mean
+  actual non-pad length is ~27 — so the gate is deleting roughly (27 - 18.9) / 27 ≈ 30% of real tokens, which matches the 30% target.
+
+  For your report, percent_non_pad_deleted_tokens is the more meaningful metric — it measures deletion rate among actual non-padding tokens only.
+---
+⏺ Here's what I found after reading all 24 pages:                                                                                                                                                                                                                 
+                                                     
+  ---                                                                                                                                                                                                                                                             
+  Runtime charts in MrT5 paper                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                                                  
+  Runtime vs deletion percentage:                                                                                                                                                                                                                                 
+  - There is no standalone chart for this. The paper reports it in tabular form only.                                                                                                                                                                           
+  - Table 8 (page 23) — "Per-language XNLI evaluation metrics" — has columns for Average Runtime (ms) and Runtime Decrease (%) for ByT5, MrT5, BP, and CP across 15 languages. This is the closest analog to our snli_runtime_vs_deletion_percentage.pdf.
+  - Table 4 (page 9) — also shows Runtime Decrease (%) in tabular form for XNLI and TyDiQA.
+  - The paper never plots runtime as a bar chart against deletion rate. Our snli_runtime_vs_deletion_percentage.pdf is actually more visual than what MrT5 does.
+
+  Runtime vs gate layer:
+  - Figure 4 (page 10) — "BPB and inference runtime for a single sequence for MrT5 models with delete gates at different layers." This is the direct analog to our snli_runtime_vs_deletion_gate_layer.pdf.
+  - It's a dual-axis line chart: BPB (blue, left axis) and Average Runtime in ms (orange, right axis) plotted vs Layer of Delete Gate (x-axis 1–5).
+
+  ---
+  Structural comparison
+
+  ┌──────────────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────┬─────────────────────────────────────┐
+  │                                             Our plot                                             │                          MrT5 equivalent                          │               Match?                │
+  ├──────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┼─────────────────────────────────────┤
+  │ snli_runtime_vs_deletion_percentage.pdf — bar chart, ms/sample per model at 0/30/50/70% deletion │ Table 8 (tabular only, no chart)                                  │ Different format; we're more visual │
+  ├──────────────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────┼─────────────────────────────────────┤
+  │ snli_runtime_vs_deletion_gate_layer.pdf — bar chart, ms/sample per gate layer                    │ Figure 4 (page 10) — dual-axis line chart, BPB + runtime vs layer │ Same data, different format         │
+  └──────────────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────┴─────────────────────────────────────┘
+
+  The key structural difference with Figure 4: MrT5 uses a dual-axis line chart showing both task quality (BPB) and runtime on the same plot against gate layer. Our snli_runtime_vs_deletion_gate_layer.pdf shows only runtime as bars. The
+  gate_layer_ablation.pdf generated by compute_savings.py is actually the closer structural match to Figure 4, since it plots accuracy + runtime together on dual axes.
+
+  For the advisor meeting, Figure 4 (page 10) is the figure to cite as precedent for the gate layer ablation chart.
+---
+❯ my advisor wants me to plot a hard deletion plot with the test set at runtime/inference time to make sure the model doesn't collapse on hard deletion. she said the x-axis will be number of steps. what will the y-axis be?                                    
+                                                                                                                                                                                                                                                                
+⏺ The y-axis should be test accuracy under hard deletion, plotted against the soft deletion test accuracy on the same axes.                                                                                                                                       
+                                                                                                                                                                                                                                                                  
+  The purpose is to show that the two curves stay close throughout training — if hard deletion "collapses," you'd see a large growing gap between the soft and hard deletion accuracy lines, or a sudden drop in the hard deletion line.                          
+                  
+  So concretely:                                                                                                                                                                                                                                                  
+  - X-axis: Training step                                                                                                                                                                                                                                         
+  - Y-axis: Accuracy (0–1 or 0–100%)
+  - Two lines: soft deletion accuracy (already logged) and hard deletion accuracy (new)
+
+  The "collapse" scenario looks like the hard deletion line diverging sharply downward from the soft deletion line at some point during training — indicating the model learned representations that rely on the presence of "deleted" tokens in the attention
+  context, so physically removing them breaks it.
+
+  For your setup, the practical question is whether to:
+  1. Log it during training — run a hard-deletion eval pass at each eval_steps and log it to W&B alongside the soft deletion eval. This requires modifying train_mrbert.py to call trainer.evaluate() a second time with hard_delete=True.
+  2. Post-hoc from checkpoints — load each saved checkpoint and run hard deletion eval on it. This works but only gives you resolution at save_steps (every 1000 steps) rather than logging_steps (every 50).
+
+  Option 1 gives a smoother curve. Do you want to add hard deletion eval logging to the training loop?
+---
+⏺ Here's what was created:          
+
+  analysis/hard_deletion_curve.py — standalone script that:                                                                                                                                                                                                       
+  1. Scans a checkpoint directory for all checkpoint-* subdirs + final/, sorted by step
+  2. Loads the SNLI test set once                                                                                                                                                                                                                                 
+  3. For each checkpoint, evaluates accuracy with soft deletion and hard deletion                                                                                                                                                                               
+  4. Saves a CSV and a PDF with two lines + shaded gap
+
+  train_modal.py — new hard_deletion_curve function + hard_deletion_curve_main entrypoint
+
+  Usage after training completes:
+  modal run training/train_modal.py::hard_deletion_curve_main --run-name mrbert-snli-30pct
+
+  What the plot shows:
+  - X-axis: training step (checkpoint-1000, checkpoint-2000, ..., final)
+  - Y-axis: test accuracy
+  - Two lines: soft deletion (blue solid) and hard deletion (red dashed)
+  - Shaded region between them = the gap
+  - Final annotation shows the gap in percentage points
+
+  A small final gap (~0) means the model is robust to hard deletion. A large gap means the model's representations depend on "deleted" tokens still being in the attention context — which would be a problem for any claim about inference speedup.
+---
+ So tokenizer.json doesn't exist in the checkpoint. This is actually fine for BERT - the original BERT tokenizer (BertTokenizer) uses a vocabulary file (vocab.txt) and doesn't require a tokenizer.json. The tokenizer.json is only needed for the fast
+  tokenizer (BertTokenizerFast). The slow tokenizer (BertTokenizer) works with just vocab.txt + tokenizer_config.json + special_tokens_map.json.
+
+  Looking at the code in measure_runtime.py and get_deletion_patterns.py, they use BertTokenizer.from_pretrained(model_path) which is the slow tokenizer and doesn't need tokenizer.json.
+
+  So the checkpoint is fine as-is. The 5 files present are sufficient for BERT's slow tokenizer. The || true in the loop (which was in my earlier suggestion for Phase 2) would have suppressed this error, but I left it out in the Phase 5 download command.
+  It's not a problem - just the tokenizer.json doesn't exist in the checkpoint, and it's not needed.
+
+  I should let the user know: the 5 files present are sufficient, tokenizer.json is only needed for the fast tokenizer variant and the scripts use BertTokenizer (slow), so Phase 5 should work fine.
+
+
+  Correct, it doesn't exist in the checkpoint — and that's fine. tokenizer.json is only needed for BertTokenizerFast. The scripts (get_deletion_patterns.py, measure_runtime.py) all use BertTokenizer.from_pretrained() which is the slow tokenizer and works
+  with just the 5 files you have:
+
+  - vocab.txt — the vocabulary
+  - tokenizer_config.json — tokenizer settings
+  - special_tokens_map.json — special token mappings
+  - config.json — model config
+  - model.safetensors — weights
+---

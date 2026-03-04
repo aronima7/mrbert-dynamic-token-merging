@@ -489,3 +489,54 @@ modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps
   Exactly the same pattern as what MrBERT now does — MrT5ForConditionalGeneration.from_pretrained(model_name, config=config) loads all pretrained T5 weights, and the delete gate (absent from the
   checkpoint) gets randomly initialized. MrT5 also has a --train_from_scratch flag for the ablation case, which MrBERT doesn't need since it was previously always training from scratch unintentionally.
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+❯ does this hard deletion curve look good? point out a collapse situation if any                                                                                                                                                                                  
+  ⎿ [Image #4]                                                                                                                                                                                                                                                   
+                                                                                                                                                                                                                                                                  
+⏺ This looks excellent. Key observations:                                                                                                                                                                                                                         
+                                                                                                                                                                                                                                                                  
+  No collapse. The two lines are essentially indistinguishable throughout the entire training run. Hard deletion tracks soft deletion from step 1000 all the way to the final checkpoint.                                                                         
+                                                                                                                                                                                                                                                                  
+  Final gap: 0.05pp (annotated on the plot). That is negligible — ~90.21% soft vs ~90.16% hard. For a model trained exclusively with soft deletion, this is a strong result.                                                                                      
+                                                                                                                                                                                                                                                                
+  What a collapse would look like:
+  - The red (hard) line suddenly diving downward while blue (soft) stays flat — typically triggered around when the PI controller ramps up deletion pressure and the gate starts firing aggressively
+  - Or a widening gap that grows throughout training, indicating the model increasingly relies on "deleted" tokens still being in the attention context
+  - Neither happens here
+
+  What the plot tells your advisor:
+  1. The delete gate learns representations that are robust to physical token removal, even though it was never explicitly trained with hard deletion
+  2. The soft-deletion training protocol (attention masking) is sufficient — the model doesn't need hard_delete_train_prob=0.5 (run M) to achieve hard deletion robustness
+  3. The runtime speedup numbers from the benchmark are valid — hard deletion at inference truly does not degrade accuracy
+
+  This is one of your strongest results. The near-zero gap directly validates the claim that the trained gate can be used for real inference speedup without accuracy loss.
+
+❯ what about this?                                                                                                                                                                                                                                                
+  ⎿  [Image #5]                                                                                                                                                                                                                                                   
+  ⎿  ⧉ Selected 1 lines from report.md in PyCharm                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                                                  
+⏺ Also excellent. Key observations:                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                                                  
+  No collapse. Same story — hard deletion (red dashed) tracks soft deletion (blue solid) throughout, with the lines crossing back and forth across the full training run.                                                                                         
+                                                                                                                                                                                                                                                                  
+  Final gap: 0.01pp — even smaller than run C's 0.05pp. This is expected: run M was trained with hard_delete_train_prob=0.5, meaning it saw hard deletion during training and explicitly learned to handle it.                                                    
+                  
+  Interesting detail — hard slightly outperforms soft in early training (steps 1000–10000). The red line is visibly above blue for the first third of training. This is consistent with hard deletion acting as a form of noise regularization early on:
+  physically removing tokens forces the model to be more robust, slightly boosting generalization before the task loss has converged.
+
+  What this pair of plots tells your advisor:
+
+  ┌─────────────────────┬───────────────────┬────────────────────┐
+  │                     │ Run C (soft-only) │ Run M (hard-train) │
+  ├─────────────────────┼───────────────────┼────────────────────┤
+  │ Final soft–hard gap │ 0.05pp            │ 0.01pp             │
+  ├─────────────────────┼───────────────────┼────────────────────┤
+  │ Final accuracy      │ ~90.2%            │ ~90.3%             │
+  └─────────────────────┴───────────────────┴────────────────────┘
+
+  - Both gaps are negligible — soft-only training is sufficient for hard deletion robustness
+  - Training with hard deletion (run M) closes the gap further but the marginal benefit is tiny
+  - Neither model collapses, confirming the gate learns representations robust to physical token removal regardless of training protocol
+
+  This directly answers advisor question #3 from your list: "Is the hard vs soft deletion comparison important to include?" — yes, and the answer is that both work, which is a clean result.
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

@@ -60,14 +60,19 @@ image = (
         "accelerate",
         "numpy<2",
         "wandb",
+        "matplotlib",
     )
     .add_local_dir(
-        "..",
+        os.path.join(os.path.dirname(__file__), ".."),
         remote_path="/workspace",
         ignore=[
             "snli_datasets",
+            "squad_datasets",
             "mrbert_checkpoints",
             "mrbert_sst2",
+            "local_checkpoints",
+            ".idea",
+            ".git",
             "__pycache__",
             "*.pyc",
         ],
@@ -258,8 +263,8 @@ def train(
     timeout=3600,
 )
 def benchmark(
-    snli_models: str = "",
-    gate_layer_models: str = "",
+    deletion_percentage_models: str = "",
+    deletion_gate_layer_models: str = "",
     n_warmup: int = 10,
     n_timed: int = 100,
     batch_size: int = 32,
@@ -268,7 +273,7 @@ def benchmark(
     """
     Run measure_runtime.py on the A100 against checkpoints stored in the volume.
 
-    snli_models / gate_layer_models are comma-separated LABEL:run_name pairs, e.g.:
+    deletion_percentage_models / deletion_gate_layer_models are comma-separated LABEL:run_name pairs, e.g.:
       "BERT:bert-snli-baseline,MrBERT-30%:mrbert-snli-30pct"
 
     Checkpoint paths are resolved as /checkpoints/<run_name>/final.
@@ -300,10 +305,10 @@ def benchmark(
             entries.append((label.strip(), path))
         return entries
 
-    snli_entries      = parse_model_specs(snli_models)
-    gate_layer_entries = parse_model_specs(gate_layer_models)
+    deletion_percentage_entries  = parse_model_specs(deletion_percentage_models)
+    deletion_gate_layer_entries  = parse_model_specs(deletion_gate_layer_models)
 
-    def run_benchmark(model_entries, label):
+    def run_benchmark(model_entries, label, csv_name, pdf_name):
         if not model_entries:
             print(f"No valid models for {label} benchmark — skipping.")
             return
@@ -358,11 +363,15 @@ def benchmark(
             torch.cuda.empty_cache()
 
         baseline_ms = all_results[0]["mean_ms"]
-        print_and_save_table(all_results, baseline_ms, max_seq_length, output_dir)
-        plot_runtime_vs_deletion(all_results, baseline_ms, output_dir)
+        print_and_save_table(all_results, baseline_ms, max_seq_length, output_dir, filename=csv_name)
+        plot_runtime_vs_deletion(all_results, baseline_ms, output_dir, filename=pdf_name)
 
-    run_benchmark(snli_entries, "SNLI")
-    run_benchmark(gate_layer_entries, "Gate layer ablation")
+    run_benchmark(deletion_percentage_entries, "SNLI deletion percentage ablation",
+                  csv_name="snli_runtime_table_deletion_percentage.csv",
+                  pdf_name="snli_runtime_vs_deletion_percentage.pdf")
+    run_benchmark(deletion_gate_layer_entries, "SNLI deletion gate layer ablation",
+                  csv_name="snli_runtime_table_deletion_gate_layer.csv",
+                  pdf_name="snli_runtime_vs_deletion_gate_layer.pdf")
 
     volume.commit()
     print(f"\nResults saved to volume at '{output_subdir}/'")
@@ -371,8 +380,8 @@ def benchmark(
 
 @app.local_entrypoint()
 def benchmark_main(
-    snli_models: str = "BERT:bert-snli-baseline,MrBERT-0%:mrbert-snli-0pct,MrBERT-30%:mrbert-snli-30pct,MrBERT-30%-HD:mrbert-snli-30pct-hd,MrBERT-50%:mrbert-snli-50pct,MrBERT-70%:mrbert-snli-70pct,Random-30%:mrbert-snli-random30",
-    gate_layer_models: str = "Layer-1:mrbert-snli-layer1,Layer-3:mrbert-snli-30pct,Layer-6:mrbert-snli-layer6,Layer-9:mrbert-snli-layer9",
+    deletion_percentage_models: str = "BERT:bert-snli-baseline,MrBERT-0%:mrbert-snli-0pct,MrBERT-30%:mrbert-snli-30pct,MrBERT-30%-HD:mrbert-snli-30pct-hd,MrBERT-50%:mrbert-snli-50pct,MrBERT-70%:mrbert-snli-70pct,Random-30%:mrbert-snli-random30",
+    deletion_gate_layer_models: str = "Layer-1:mrbert-snli-layer1,Layer-3:mrbert-snli-30pct,Layer-6:mrbert-snli-layer6,Layer-9:mrbert-snli-layer9",
     n_warmup: int = 10,
     n_timed: int = 100,
     batch_size: int = 32,
@@ -381,15 +390,130 @@ def benchmark_main(
     """
     Entrypoint for `modal run train_modal.py::benchmark_main`.
     Runs inference timing on A100 against all trained checkpoints in the volume.
-    Defaults benchmark all SNLI runs; override with --snli-models and --gate-layer-models.
+    Defaults benchmark all SNLI runs; override with --deletion-percentage-models and --deletion-gate-layer-models.
     """
     benchmark.remote(
-        snli_models=snli_models,
-        gate_layer_models=gate_layer_models,
+        deletion_percentage_models=deletion_percentage_models,
+        deletion_gate_layer_models=deletion_gate_layer_models,
         n_warmup=n_warmup,
         n_timed=n_timed,
         batch_size=batch_size,
         output_subdir=output_subdir,
+    )
+
+
+@app.function(
+    image=image,
+    gpu="A100",
+    volumes={"/checkpoints": volume},
+    timeout=3600 * 4,
+)
+def hard_deletion_curve(
+    run_name: str = "mrbert-snli-30pct",
+    output_subdir: str = "analysis_figures",
+    n_samples: int = 9824,
+    batch_size: int = 64,
+):
+    """
+    Post-hoc evaluation of soft vs hard deletion accuracy across training checkpoints.
+    Loads each checkpoint-* and final/ from /checkpoints/<run_name>/,
+    evaluates on the SNLI test set under both soft and hard deletion,
+    and saves a CSV + PDF to /checkpoints/<output_subdir>/.
+
+    Download results:
+      modal volume get mrbert-checkpoints <output_subdir>/<run_name>_hard_deletion_curve.csv ./analysis/figures/<run_name>_hard_deletion_curve.csv
+      modal volume get mrbert-checkpoints <output_subdir>/<run_name>_hard_deletion_curve.pdf ./analysis/figures/<run_name>_hard_deletion_curve.pdf
+    """
+    import sys
+    sys.path.insert(0, "/workspace/models")
+    sys.path.insert(0, "/workspace/analysis")
+
+    checkpoint_dir = f"/checkpoints/{run_name}"
+    output_dir = f"/checkpoints/{output_subdir}"
+    os.makedirs(output_dir, exist_ok=True)
+
+    from hard_deletion_curve import find_checkpoints, load_snli_test, evaluate_accuracy, save_csv, plot_curve
+    import torch
+    from transformers import BertTokenizer
+
+    device = "cuda"
+    max_seq_length = 128
+
+    print(f"Checkpoint dir: {checkpoint_dir}")
+    checkpoints = find_checkpoints(checkpoint_dir)
+    print(f"Found {len(checkpoints)} checkpoints")
+
+    tokenizer = BertTokenizer.from_pretrained(checkpoints[0][1])
+    dataset = load_snli_test(
+        local_snli_dir="/checkpoints/snli_datasets",
+        tokenizer=tokenizer,
+        max_seq_length=max_seq_length,
+        n_samples=n_samples,
+    )
+
+    import json
+    from configuration_mrbert import MrBertConfig
+    from modeling_mrbert import MrBertForSequenceClassification
+
+    results = []
+    n = len(checkpoints)
+    for i, (step, ckpt_path) in enumerate(checkpoints):
+        step_label = "final" if i == n - 1 and os.path.basename(ckpt_path) == "final" else str(step)
+        print(f"\n[{i+1}/{n}] {step_label}  ({ckpt_path})")
+
+        with open(os.path.join(ckpt_path, "config.json")) as f:
+            cfg = json.load(f)
+        if cfg.get("model_type") == "mrbert":
+            config = MrBertConfig.from_pretrained(ckpt_path)
+            model = MrBertForSequenceClassification.from_pretrained(ckpt_path, config=config)
+        else:
+            from transformers import BertForSequenceClassification
+            model = BertForSequenceClassification.from_pretrained(ckpt_path)
+        model.to(device)
+
+        soft_acc = evaluate_accuracy(model, dataset, batch_size, device, hard_delete=False)
+        hard_acc = evaluate_accuracy(model, dataset, batch_size, device, hard_delete=True)
+        print(f"  soft={soft_acc:.4f}  hard={hard_acc:.4f}  gap={abs(soft_acc-hard_acc)*100:.2f}pp")
+
+        results.append({
+            "step": step,
+            "step_label": step_label,
+            "soft_acc": soft_acc,
+            "hard_acc": hard_acc,
+        })
+        del model
+        torch.cuda.empty_cache()
+
+    csv_path = os.path.join(output_dir, f"{run_name}_hard_deletion_curve.csv")
+    pdf_path = os.path.join(output_dir, f"{run_name}_hard_deletion_curve.pdf")
+    save_csv(results, csv_path)
+    plot_curve(results, pdf_path, run_name)
+
+    volume.commit()
+    print(f"\nResults saved to volume at '{output_subdir}/'")
+    print(f"Download CSV: modal volume get mrbert-checkpoints {output_subdir}/{run_name}_hard_deletion_curve.csv ./analysis/figures/{run_name}_hard_deletion_curve.csv")
+    print(f"Download PDF: modal volume get mrbert-checkpoints {output_subdir}/{run_name}_hard_deletion_curve.pdf ./analysis/figures/{run_name}_hard_deletion_curve.pdf")
+
+
+@app.local_entrypoint()
+def hard_deletion_curve_main(
+    run_name: str = "mrbert-snli-30pct",
+    output_subdir: str = "analysis_figures",
+    n_samples: int = 9824,
+    batch_size: int = 64,
+):
+    """
+    Entrypoint for `modal run training/train_modal.py::hard_deletion_curve_main`.
+    Evaluates soft vs hard deletion accuracy across all saved checkpoints for a run.
+
+    Example:
+      modal run training/train_modal.py::hard_deletion_curve_main --run-name mrbert-snli-30pct
+    """
+    hard_deletion_curve.remote(
+        run_name=run_name,
+        output_subdir=output_subdir,
+        n_samples=n_samples,
+        batch_size=batch_size,
     )
 
 

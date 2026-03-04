@@ -106,12 +106,22 @@ def load_snli_batch(local_snli_dir: str, tokenizer, max_seq_length: int, n_sampl
         print(f"Loading SNLI test from {local_test} ...")
         input_ids_list, mask_list = [], []
         with open(local_test) as f:
-            for i, line in enumerate(f):
-                if i >= n_samples:
+            for line in f:
+                if len(input_ids_list) >= n_samples:
                     break
                 ex = json.loads(line)
-                input_ids_list.append(ex["input_ids"][:max_seq_length])
-                mask_list.append(ex["attention_mask"][:max_seq_length])
+                ids = ex["input_ids"]
+                mask = ex["attention_mask"]
+                # Each line may be a single example (flat list) or a batch (list of lists)
+                if ids and isinstance(ids[0], list):
+                    for seq_ids, seq_mask in zip(ids, mask):
+                        if len(input_ids_list) >= n_samples:
+                            break
+                        input_ids_list.append(seq_ids[:max_seq_length])
+                        mask_list.append(seq_mask[:max_seq_length])
+                else:
+                    input_ids_list.append(ids[:max_seq_length])
+                    mask_list.append(mask[:max_seq_length])
     else:
         print("Loading SNLI test from HuggingFace (this may take a moment)...")
         from datasets import load_dataset
@@ -242,7 +252,7 @@ def measure_runtime(
 # Table printing and CSV output
 # ---------------------------------------------------------------------------
 
-def print_and_save_table(results: list, baseline_ms: float, max_seq_len: int, output_dir: str):
+def print_and_save_table(results: list, baseline_ms: float, max_seq_len: int, output_dir: str, filename: str = "runtime_table.csv"):
     """
     Print a runtime table (mirrors MrT5 paper Table 3) and save as CSV.
 
@@ -280,7 +290,7 @@ def print_and_save_table(results: list, baseline_ms: float, max_seq_len: int, ou
     print("=" * 85)
 
     os.makedirs(output_dir, exist_ok=True)
-    csv_path = os.path.join(output_dir, "runtime_table.csv")
+    csv_path = os.path.join(output_dir, filename)
     with open(csv_path, "w") as f:
         headers = ["label", "ms_per_sample", "std_ms", "pct_decrease_vs_bert",
                    "mean_seq_len_after", "seq_len_reduction_pct"]
@@ -294,7 +304,7 @@ def print_and_save_table(results: list, baseline_ms: float, max_seq_len: int, ou
 # Runtime vs deletion rate plot
 # ---------------------------------------------------------------------------
 
-def plot_runtime_vs_deletion(results: list, baseline_ms: float, output_dir: str):
+def plot_runtime_vs_deletion(results: list, baseline_ms: float, output_dir: str, filename: str = "runtime_vs_deletion.pdf"):
     """
     Bar chart: runtime (ms/sample) per model, with BERT baseline as horizontal dashed line.
     """
@@ -328,7 +338,7 @@ def plot_runtime_vs_deletion(results: list, baseline_ms: float, output_dir: str)
     ax.set_ylim(0, max(means) * 1.3)
 
     os.makedirs(output_dir, exist_ok=True)
-    path = os.path.join(output_dir, "runtime_vs_deletion.pdf")
+    path = os.path.join(output_dir, filename)
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {path}")

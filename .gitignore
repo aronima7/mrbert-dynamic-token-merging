@@ -11,3 +11,6 @@ mrt5/diagnostic_datasets/*
 mrt5/lm_datasets/*
 mrt5/training/local_mrt5_checkpoints/*
 mrt5/training/local_t5_checkpoints/*
+mrbert/local_checkpoints/*
+mrbert/training/__pycache__/*
+mrbert/mrbert_squad_test/*

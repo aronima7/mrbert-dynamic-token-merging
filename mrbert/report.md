@@ -27,112 +27,6 @@
 **Tier 2** = adds depth for the gate layer ablation chart and PI controller ablation; launch alongside Tier 1 if bandwidth allows.
 
 ---
-
-## Time Estimates
-
-| Phase     | Work                                        | Estimate            |
-|-----------|---------------------------------------------|---------------------|
-| Phase 1   | Launch all runs (terminal commands)         | ~10 min             |
-| Phase 1   | Wait for SNLI runs to complete (A–J)        | ~90–100 min on A100 |
-| Phase 1   | Wait for SQuAD runs to complete (K–L)       | ~40 min on A100     |
-| Phase 2   | Download all checkpoints from Modal Volume  | ~15 min             |
-| Phase 3   | Capture metrics from W&B                    | ~10 min             |
-| Phase 4   | Runtime measurement (measure_runtime.py)    | ~10 min             |
-| Phase 4.5 | Hard deletion curve (post-hoc eval)         | ~20 min on A100     |
-| Phase 5   | Deletion pattern analysis                   | ~5 min              |
-| Phase 6   | Generate all charts                         | ~5 min              |
-| **Total** |                                             | **~3.5 hours**      |
-
----
-
-## Phase 1 — Launch Training Runs
-
-> **All runs in this phase are PARALLEL. Launch all of them from separate terminals (or as a batch) before doing anything else. Each run is independent and Modal handles parallelism.**
-
-### SNLI — Tier 1 Core (Runs A, B, C, D, E, F)
-
-```bash
-modal run --detach train_modal.py::main --model-type BERT --task sequence_classification --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name bert-snli-baseline
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.0 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-0pct
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-30pct
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --hard-delete-train-prob 0.5 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-30pct-hd
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.5 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-50pct
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.7 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-70pct
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --deletion-type random --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-random30
-```
-
-### SNLI — Tier 2 Ablations (Runs G, H, I, J)
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --no-use-pi-controller --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-nopi
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 1 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer1
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 6 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer6
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --delete-gate-layer 9 --mode training-and-eval --wandb-project mrbert-snli --wandb-run-name mrbert-snli-layer9
-```
-
-### SQuAD — Tier 1 Core (Runs K, L)
-
-```bash
-modal run --detach train_modal.py::main --model-type BERT --task question_answering --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name bert-squad-baseline
-```
-
-```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name mrbert-squad-30pct
-```
-
----
-
-## Phase 2 — Download Checkpoints (Optional but Recommended)
-
-> **Sequential. Run after Phase 1 runs complete. Monitor progress at https://modal.com/apps.**
-
-Download all completed checkpoints to local disk. Each command downloads the model files directly into the destination folder, avoiding the nested-directory issue with `modal volume get`:
-
-```bash
-mkdir -p ./local_checkpoints/bert-snli/final && modal volume get mrbert-checkpoints bert-snli-baseline/final/config.json ./local_checkpoints/bert-snli/final/config.json
-```
-
-The above pattern is cumbersome for full checkpoints. Instead, download each run's `final/` directory by listing its contents first and downloading file by file, or use:
-
-```bash
-for run in bert-snli-baseline mrbert-snli-0pct mrbert-snli-30pct mrbert-snli-30pct-hd mrbert-snli-50pct mrbert-snli-70pct mrbert-snli-random30 mrbert-snli-layer1 mrbert-snli-layer6 mrbert-snli-layer9 bert-squad-baseline mrbert-squad-30pct; do
-  mkdir -p ./local_checkpoints/${run}/final
-  for f in config.json tokenizer_config.json vocab.txt special_tokens_map.json model.safetensors; do
-    modal volume get mrbert-checkpoints ${run}/final/${f} ./local_checkpoints/${run}/final/${f} 2>/dev/null || true
-  done
-  echo "Downloaded ${run}"
-done
-```
-
----
-
 ## Phase 3 — Capture Metrics from W&B
 
 > **Sequential. Do this while waiting for downloads or immediately after.**
@@ -143,19 +37,19 @@ For each completed run, open W&B and copy the following values from the **Summar
 ### SNLI Results Table (fill in from W&B)
 
 | Run | Model                    | Del Rate Target | test/accuracy | percent_non_pad_deleted_tokens | new_seq_len | seq_len_reduction_pct |
-|-----|--------------------------|-----------------|---------------|--------------------------------|-------------|----------------------|
-| A   | BERT baseline            | 0%              | `___`         | 0                             | 128         | 0                    |
-| B   | MrBERT 0%                | 0%              | `___`         | `___`                         | `___`       | `___`                |
-| C   | MrBERT 30%               | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| M   | MrBERT 30% hard-train    | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| D   | MrBERT 50%               | 50%             | `___`         | `___`                         | `___`       | `___`                |
-| E   | MrBERT 70%               | 70%             | `___`         | `___`                         | `___`       | `___`                |
-| F   | MrBERT Random 30%        | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| G   | MrBERT No-PI 30%         | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| H   | MrBERT Layer 1           | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| C   | MrBERT Layer 3 (reuse C) | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| I   | MrBERT Layer 6           | 30%             | `___`         | `___`                         | `___`       | `___`                |
-| J   | MrBERT Layer 9           | 30%             | `___`         | `___`                         | `___`       | `___`                |
+|-----|--------------------------|-----------------|---------------|--------------------------------|-------------|-----------------------|
+| A   | BERT baseline            | 0%              | 0.9048        | 0                              | 128         | 0                     |
+| B   | MrBERT 0%                | 0%              | 0.905         | 0                              | 27.4105     | 94.65                 |
+| C   | MrBERT 30%               | 30%             | 0.9021        | 30.7978                        | 18.9636     | 96.3                  |
+| M   | MrBERT 30% hard-train    | 30%             | 0.9026        | 31.1384                        | 18.8695     | 96.31                 |
+| D   | MrBERT 50%               | 50%             | 0.8952        | 52.5503                        | 12.9702     | 97.47                 |
+| E   | MrBERT 70%               | 70%             | 0.8825        | 72.4306                        | 7.5252      | 98.53                 |
+| F   | MrBERT Random 30%        | 30%             | 0.8726        | 49.6386                        | 64.2105     | 87.46                 |
+| G   | MrBERT No-PI 30%         | 30%             | 0.8647        | 88.979                         | 3.0         | 99.41                 |
+| H   | MrBERT Layer 1           | 30%             | 0.9042        | 30.9752                        | 18.9188     | 96.3                  |
+| C   | MrBERT Layer 3 (reuse C) | 30%             | C             | C                              | C           | C                     |
+| I   | MrBERT Layer 6           | 30%             | 0.9036        | 33.8885                        | 18.0721     | 96.47                 |
+| J   | MrBERT Layer 9           | 30%             | 0.9022        | 46.3394                        | 14.6415     | 97.14                 |
 
 ### SQuAD Results Table (fill in from W&B)
 
@@ -194,17 +88,17 @@ modal volume get mrbert-checkpoints analysis_figures/snli_runtime_vs_deletion_ga
 
 | Model            | ms/sample | % decrease vs BERT |
 |------------------|-----------|--------------------|
-| BERT baseline    | `___`     | —                  |
-| MrBERT 0%        | `___`     | `___`              |
-| MrBERT 30%       | `___`     | `___`              |
-| MrBERT 30% hd    | `___`     | `___`              |
-| MrBERT 50%       | `___`     | `___`              |
-| MrBERT 70%       | `___`     | `___`              |
-| Random 30%       | `___`     | `___`              |
-| Layer 1          | `___`     | `___`              |
-| Layer 3          | `___`     | `___`              |
-| Layer 6          | `___`     | `___`              |
-| Layer 9          | `___`     | `___`              |
+| BERT baseline    | 1.440     | 0                  |
+| MrBERT 0%        | 0.878     | 39.01              |
+| MrBERT 30%       | 0.763     | 47.03              |
+| MrBERT 30% hd    | 0.757     | 47.44              |
+| MrBERT 50%       | 0.701     | 51.35              |
+| MrBERT 70%       | 0.705     | 51.35              |
+| Random 30%       | 1.157     | 19.61              |
+| Layer 1          | 0.568     | 0                  |
+| Layer 3          | 0.761     | -33.90             |
+| Layer 6          | 1.039     | -82.88             |
+| Layer 9          | 1.324     | -132.99            |
 
 Saved files: `analysis/figures/snli_runtime_table_deletion_percentage.csv`, `analysis/figures/snli_runtime_vs_deletion_percentage.pdf`, `analysis/figures/snli_runtime_table_deletion_gate_layer.csv`, `analysis/figures/snli_runtime_vs_deletion_gate_layer.pdf`
 
@@ -212,9 +106,9 @@ Saved files: `analysis/figures/snli_runtime_table_deletion_percentage.csv`, `ana
 
 ## Phase 4.5 — Hard Deletion Curve
 
-> **Run on A100 via Modal after Phase 1 training completes.**
+> **Run on A100 via Modal after training completes.**
 > **Requires checkpoints in the Modal volume (checkpoint-* subdirs saved during training).**
-> **Shows that hard deletion accuracy tracks soft deletion accuracy throughout training — confirms the model does not collapse when tokens are physically removed at inference.**
+> **Shows that accuracy under hard deletion tracks soft deletion throughout training — confirms the model does not collapse when tokens are physically removed at inference.**
 
 Run for the main 30% soft-deletion model (run C) and the hard-train variant (run M):
 
@@ -237,22 +131,30 @@ modal volume get mrbert-checkpoints analysis_figures/mrbert-snli-30pct-hd_hard_d
 ```
 
 **What to look for:**
-- Both soft and hard deletion lines should track closely throughout training
+- Both lines should track closely — a large or growing gap indicates the model relies on deleted tokens still being present in attention context
 - Run C (soft-only training): expect a small but nonzero soft–hard gap at the end
 - Run M (hard_delete_train_prob=0.5): gap should be near zero, since the model was exposed to hard deletion during training
-- A large or growing gap = the model relies on deleted tokens still being in the attention context
 
 ---
 
 ## Phase 5 — Deletion Pattern Analysis
 
-> **Parallel with Phase 4. Requires Phase 2 (MrBERT 30% SNLI checkpoint downloaded).**
+> **Parallel with Phase 4. Requires MrBERT 30% SNLI checkpoint downloaded from the Modal volume.**
 
 ```bash
+mkdir -p ./local_checkpoints/mrbert-snli-30pct/final
+for f in config.json tokenizer_config.json vocab.txt special_tokens_map.json model.safetensors; do
+  modal volume get mrbert-checkpoints mrbert-snli-30pct/final/${f} ./local_checkpoints/mrbert-snli-30pct/final/${f}
+done
+```
+
+```bash
+cd mrbert/
 python analysis/get_deletion_patterns.py --model_path ./local_checkpoints/mrbert-snli-30pct/final --local_snli_dir ./snli_datasets --sample_size 1000 --output_dir ./analysis/deletion_patterns --output_file mrbert-snli-30pct_test.json
 ```
 
 ```bash
+cd mrbert/ 
 python analysis/deletion_pattern_analysis.py --input_file ./analysis/deletion_patterns/mrbert-snli-30pct_test.json --output_dir ./analysis/figures
 ```
 
@@ -294,7 +196,7 @@ Saved file: `analysis/figures/gate_layer_ablation.pdf`
 
 ## Complete List of Output Files
 
-| File                                                                          | What it shows                                              | Advisor relevance                  |
+| File                                                                          | What it shows                                              | Advisor relevance                   |
 |-------------------------------------------------------------------------------|------------------------------------------------------------|-------------------------------------|
 | `analysis/figures/accuracy_vs_seq_reduction.pdf`                             | Accuracy vs sequence length reduction % — core tradeoff    | Primary result                      |
 | `analysis/figures/accuracy_vs_compute.pdf`                                   | Accuracy vs relative MACs — efficiency frontier            | Primary result                      |
@@ -308,6 +210,7 @@ Saved file: `analysis/figures/gate_layer_ablation.pdf`
 | `analysis/figures/mrbert-snli-30pct_test_by_type.pdf`                        | Deletion rate by token type (word/subword/punct)           | Qualitative                         |
 | `analysis/figures/mrbert-snli-30pct_test_premise_vs_hyp.pdf`                 | Premise vs hypothesis deletion rate                        | Qualitative                         |
 | `analysis/deletion_patterns/mrbert-snli-30pct_test.json`                     | Per-token gate decisions, 1000 examples                    | For colored examples in slides      |
+| `analysis/deletion_patterns/mrbert-snli-30pct_test.json`     | Per-token gate decisions, 1000 examples                    | For colored examples in slides |
 
 ---
 
@@ -331,14 +234,14 @@ Saved file: `analysis/figures/gate_layer_ablation.pdf`
 
 Show the filled-in results table + `accuracy_vs_seq_reduction.pdf`:
 
-| Model | Accuracy | Del Rate | Seq Δ | Runtime |
-|-------|----------|----------|-------|---------|
-| BERT baseline | `___` | 0% | 0% | `___` ms |
-| MrBERT 0% (sanity) | `___` | 0% | 0% | `___` ms |
-| MrBERT 30% | `___` | 30% | `___`% | `___` ms |
-| MrBERT 50% | `___` | 50% | `___`% | `___` ms |
-| MrBERT 70% | `___` | 70% | `___`% | `___` ms |
-| Random gate 30% | `___` | 30% | 30% | `___` ms |
+| Model               | Accuracy | Del Rate | Seq Δ    | Runtime    |
+|---------------------|----------|----------|----------|------------|
+| BERT baseline       | `___`    | 0%       | 0%       | `___` ms   |
+| MrBERT 0% (sanity)  | `___`    | 0%       | 0%       | `___` ms   |
+| MrBERT 30%          | `___`    | 30%      | `___`%   | `___` ms   |
+| MrBERT 50%          | `___`    | 50%      | `___`%   | `___` ms   |
+| MrBERT 70%          | `___`    | 70%      | `___`%   | `___` ms   |
+| Random gate 30%     | `___`    | 30%      | 30%      | `___` ms   |
 
 Key talking points:
 - MrBERT 0% should match BERT — validates the implementation is fair
@@ -348,10 +251,10 @@ Key talking points:
 
 **4. Core Results — SQuAD (5 min)**
 
-| Model | EM | F1 | Seq Δ | Runtime |
-|-------|----|----|-------|---------|
-| BERT baseline | `___` | `___` | 0% | `___` ms |
-| MrBERT 30% | `___` | `___` | `___`% | `___` ms |
+| Model         | EM    | F1    | Seq Δ  | Runtime  |
+|---------------|-------|-------|--------|----------|
+| BERT baseline | `___` | `___` | 0%     | `___` ms |
+| MrBERT 30%    | `___` | `___` | `___`% | `___` ms |
 
 Key talking point: QA requires extracting the exact answer span. The gate must preserve semantically critical context tokens. Does the accuracy hold up?
 
@@ -359,7 +262,6 @@ Key talking point: QA requires extracting the exact answer span. The gate must p
 
 - `gate_layer_ablation.pdf`: earlier gate → faster but less accurate; layer 3 is the sweet spot
 - No PI controller: what happens to actual deletion rate without adaptive control?
-- Show `mrbert-snli-30pct_hard_deletion_curve.pdf`: soft vs hard deletion accuracy over training — confirms the model doesn't collapse under hard deletion at inference
 - Show `mrbert-snli-30pct_test_by_type.pdf`: which token types get deleted? (function words vs content words)
 - Show `mrbert-snli-30pct_test_premise_vs_hyp.pdf`: does the gate treat premise and hypothesis differently?
 

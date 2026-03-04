@@ -1,0 +1,5 @@
+label,ms_per_sample,std_ms,pct_decrease_vs_bert,mean_seq_len_after,seq_len_reduction_pct
+Layer-1,0.568,0.052,0.00,18.8,85.35
+Layer-3,0.761,0.042,-33.90,18.7,85.37
+Layer-6,1.039,0.021,-82.88,18.2,85.78
+Layer-9,1.324,0.010,-132.99,14.8,88.47
