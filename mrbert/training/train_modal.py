@@ -210,6 +210,8 @@ def train(
         task_args += ["--max_seq_length", "384"]
 
     # Strip task/dataset keys from DEFAULT_ARGS (replaced by task_args above)
+    default_args_filtered = []
+    skip_next = False
     task_keys = {
         "--task", "--dataset_name", "--max_seq_length",
         "--batch_size", "--regularizer_delay",
