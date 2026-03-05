@@ -341,6 +341,12 @@ Run the test suite to verify the implementation:
 ```bash
 python test_mrbert.py
 ```
+  # List all running apps and get their IDs
+  modal app list
+
+  # Stop a specific app by ID
+  modal app stop <app-id>
+```
 
 This runs tests for:
 - ✅ Configuration creation
@@ -595,6 +601,95 @@ ARONIMA RUNS
   python data/preprocess_squad.py --output_dir ./squad_datasets --max_samples 1000
   python training/train_mrbert.py --model_type MrBERT --task question_answering --mode training-only --dataset_name local_squad --local_squad_dir ./squad_datasets --max_steps 100 --max_train_samples 200 --max_eval_samples 200 --batch_size 8 --logging_steps 10 --eval_steps 50 --output_dir ./mrbert_squad_test --disable_wandb  --deletion_loss_weight 0.1  --target_deletion_rate 0.3  
 --- 
+  tydiQA, SST-2, mrpc, imdb
+  LOCAL 
+
+  # --- Preprocess first (for local/Modal use) ---
+  cd mrbert/data
+  python preprocess_sst2.py --output_dir ../sst2_datasets
+  python preprocess_mrpc.py --output_dir ../mrpc_datasets
+  python preprocess_imdb.py --output_dir ../imdb_datasets
+  python preprocess_tydiqa.py --output_dir ../tydiqa_datasets
+
+  # --- Train with local files ---
+  python train_mrbert.py --task sequence_classification --dataset_name local_sst2 --output_dir ./mrbert_sst2
+  python train_mrbert.py --task sequence_classification --dataset_name local_mrpc --output_dir ./mrbert_mrpc
+  python train_mrbert.py --task sequence_classification --dataset_name local_imdb --output_dir ./mrbert_imdb
+  python train_mrbert.py --task question_answering      --dataset_name local_tydiqa --output_dir ./mrbert_tydiqa
+
+  # --- Or load directly from HuggingFace (SST-2/MRPC already worked; now IMDB and TyDi QA too) ---
+  python train_mrbert.py --task sequence_classification --dataset_name glue --dataset_config sst2 --output_dir ./mrbert_sst2
+  python train_mrbert.py --task sequence_classification --dataset_name glue --dataset_config mrpc --output_dir ./mrbert_mrpc
+  python train_mrbert.py --task sequence_classification --dataset_name stanfordnlp/imdb --output_dir ./mrbert_imdb
+  python train_mrbert.py --task question_answering      --dataset_name tydiqa --dataset_config secondary_task --output_dir ./mrbert_tydiqa
+
+  # All of the above work with --model_type BERT for baseline or MrBERT (default)
+---
+  Modal                                                                                                                                                                                            
+                                                                                                                                                                                                         
+  SST-2                                                                                                                                                                                                    
+                                                                                                                                                                                                         
+  # MrBERT on SST-2
+  modal run --detach mrbert/training/train_modal.py \
+    --task sequence_classification --dataset-name local_sst2 \
+    --model-type MrBERT --num-epochs 3 --wandb-run-name mrbert-sst2-30pct
+
+  # BERT baseline on SST-2
+  modal run --detach mrbert/training/train_modal.py \
+    --task sequence_classification --dataset-name local_sst2 \
+    --model-type BERT --num-epochs 3 --wandb-run-name bert-sst2-baseline
+
+  MRPC
+
+  # MrBERT on MRPC
+  modal run --detach mrbert/training/train_modal.py \
+    --task sequence_classification --dataset-name local_mrpc \
+    --model-type MrBERT --num-epochs 3 --wandb-run-name mrbert-mrpc-30pct
+
+  # BERT baseline on MRPC
+  modal run --detach mrbert/training/train_modal.py \
+    --task sequence_classification --dataset-name local_mrpc \
+    --model-type BERT --num-epochs 3 --wandb-run-name bert-mrpc-baseline
+
+  IMDB
+
+  # MrBERT on IMDB
+  modal run --detach mrbert/training/train_modal.py \
+    --task sequence_classification --dataset-name local_imdb \
+    --model-type MrBERT --num-epochs 3 --wandb-run-name mrbert-imdb-30pct
+
+  # BERT baseline on IMDB
+  modal run --detach mrbert/training/train_modal.py \
+    --task sequence_classification --dataset-name local_imdb \
+    --model-type BERT --num-epochs 3 --wandb-run-name bert-imdb-baseline
+
+  TyDi QA
+
+  # MrBERT on TyDi QA
+  modal run --detach mrbert/training/train_modal.py \
+    --task question_answering --dataset-name local_tydiqa \
+    --model-type MrBERT --num-epochs 3 --wandb-run-name mrbert-tydiqa-30pct
+
+  # BERT baseline on TyDi QA
+  modal run --detach mrbert/training/train_modal.py \
+    --task question_answering --dataset-name local_tydiqa \
+    --model-type BERT --num-epochs 3 --wandb-run-name bert-tydiqa-baseline
+---
+  Download checkpoints
+
+  modal volume get mrbert-checkpoints mrbert-sst2-30pct/final    ./local_checkpoints/mrbert-sst2
+  modal volume get mrbert-checkpoints bert-sst2-baseline/final   ./local_checkpoints/bert-sst2
+  modal volume get mrbert-checkpoints mrbert-mrpc-30pct/final    ./local_checkpoints/mrbert-mrpc
+  modal volume get mrbert-checkpoints mrbert-imdb-30pct/final    ./local_checkpoints/mrbert-imdb
+  modal volume get mrbert-checkpoints mrbert-tydiqa-30pct/final  ./local_checkpoints/mrbert-tydiqa
+
+  Quick smoke tests (20 steps, no --detach)
+
+  modal run mrbert/training/train_modal.py --task sequence_classification --dataset-name local_sst2
+  modal run mrbert/training/train_modal.py --task sequence_classification --dataset-name local_mrpc
+  modal run mrbert/training/train_modal.py --task sequence_classification --dataset-name local_imdb
+  modal run mrbert/training/train_modal.py --task question_answering      --dataset-name local_tydiqa
+---
 ❯ how many epochs will give me viable results?                                                                                                                                                             
   ⎿  ⧉ Selected 1 lines from mrbert/README.md in PyCharm                                                                                                                                                 
                                                                                                                                                                                                            
@@ -1589,4 +1684,107 @@ Use W&B Reports — create a Report that pulls charts from multiple projects int
   - special_tokens_map.json — special token mappings
   - config.json — model config
   - model.safetensors — weights
+---
+**SST-2**
+```bash
+python data/preprocess_sst2.py --output_dir sst2_datasets --max_samples 200
+```
+```bash
+# MrBERT
+python training/train_mrbert.py --task sequence_classification --dataset_name local_sst2 --local_sst2_dir sst2_datasets --max_steps 50 --logging_steps 10 --max_eval_samples 50 --batch_size 16 --disable_wandb --output_dir ./test_sst2_mrbert
+```
+```bash
+# BERT baseline
+python training/train_mrbert.py --task sequence_classification --dataset_name local_sst2 --local_sst2_dir sst2_datasets --model_type BERT --max_steps 50 --logging_steps 10 --max_eval_samples 50 --batch_size 16 --disable_wandb --output_dir ./test_sst2_bert
+```
+
+---
+**MRPC**
+```bash
+python data/preprocess_mrpc.py --output_dir mrpc_datasets --max_samples 200
+```
+```bash
+# MrBERT
+python training/train_mrbert.py --task sequence_classification --dataset_name local_mrpc --local_mrpc_dir mrpc_datasets --max_steps 50 --logging_steps 10 --max_eval_samples 50 --batch_size 16 --disable_wandb --output_dir ./test_mrpc_mrbert
+```
+```bash
+# BERT baseline
+python training/train_mrbert.py --task sequence_classification --dataset_name local_mrpc --local_mrpc_dir mrpc_datasets --model_type BERT --max_steps 50 --logging_steps 10 --max_eval_samples 50 --batch_size 16 --disable_wandb --output_dir ./test_mrpc_bert
+```
+
+---
+
+**IMDB**
+```bash
+python data/preprocess_imdb.py --output_dir imdb_datasets --max_samples 200
+```
+```bash
+# MrBERT
+python training/train_mrbert.py --task sequence_classification --dataset_name local_imdb --local_imdb_dir imdb_datasets --max_steps 50 --logging_steps 10 --max_eval_samples 20 --batch_size 4 --max_seq_length 512 --disable_wandb --output_dir ./test_imdb_mrbert
+```
+```bash
+# BERT baseline
+python training/train_mrbert.py --task sequence_classification --dataset_name local_imdb --local_imdb_dir imdb_datasets --model_type BERT --max_steps 50 --logging_steps 10 --max_eval_samples 20 --batch_size 4 --max_seq_length 512 --disable_wandb --output_dir ./test_imdb_bert
+```
+
+---
+
+**TyDi QA**
+```bash
+python data/preprocess_tydiqa.py --output_dir tydiqa_datasets --max_samples 100
+```
+```bash
+# MrBERT
+python training/train_mrbert.py --task question_answering --dataset_name local_tydiqa --local_tydiqa_dir tydiqa_datasets --max_steps 50 --logging_steps 10 --max_eval_samples 50 --batch_size 4 --max_seq_length 384 --disable_wandb --output_dir ./test_tydiqa_mrbert
+```
+```bash
+# BERT baseline
+python training/train_mrbert.py --task question_answering --dataset_name local_tydiqa --local_tydiqa_dir tydiqa_datasets --model_type BERT --max_steps 50 --logging_steps 10 --max_eval_samples 50 --batch_size 4 --max_seq_length 384 --disable_wandb --output_dir ./test_tydiqa_bert
+```
+---
+  The regularizer_delay is the number of training steps to wait before the deletion loss kicks in. The idea is to let BERT first learn the task before the gate starts deleting tokens. If it kicks in too
+  early (before the model has learned anything useful), the gate may delete important tokens before it understands what's important.
+
+  The delay is scaled to roughly 5-10% of total training steps per dataset, which makes sense because:
+  - A fixed delay (e.g., 1000 steps) would be ~12% of SNLI's 8.5k steps, but 175% of MRPC's 575 steps (way too long)
+  - For SNLI we used 1000 steps (~2% of 51.5k steps)
+  - For MRPC we used 50 steps (~8% of 575 steps)
+
+  So yes, the delay needs to be proportional to the total training duration of each dataset.
+
+  The regularizer_delay is the number of training steps to wait before the deletion loss kicks in. The idea is to let BERT first learn the task before the gate starts deleting tokens. If it kicks in too
+  early (before the model has learned anything useful), the gate may delete important tokens before it understands what's important.
+
+  The delay is scaled to roughly 5-10% of total training steps per dataset, which makes sense because:
+  - A fixed delay (e.g., 1000 steps) would be ~12% of SNLI's 8.5k steps, but 175% of MRPC's 575 steps (way too long)
+  - For SNLI we used 1000 steps (~2% of 51.5k steps)
+  - For MRPC we used 50 steps (~8% of 575 steps)
+
+  So yes, the delay needs to be proportional to the total training duration of each dataset.
+
+  The regularizer_delay is the number of training steps to wait before the deletion loss kicks in. The idea is to let BERT first learn the task before the gate starts deleting tokens. If it kicks in too
+  early (before the model has learned anything useful), the gate may delete important tokens before it understands what's important.
+
+  The delay is scaled to roughly 5-10% of total training steps per dataset, which makes sense because:
+  - A fixed delay (e.g., 1000 steps) would be ~12% of SNLI's 8.5k steps, but 175% of MRPC's 575 steps (way too long)
+  - For SNLI we used 1000 steps (~2% of 51.5k steps)
+  - For MRPC we used 50 steps (~8% of 575 steps)
+
+  So yes, the delay needs to be proportional to the total training duration of each dataset.
+ ┌─────────┬─────────────┬───────┬────────────┐
+  │ Dataset │ Total steps │ delay │ % of steps │
+  ├─────────┼─────────────┼───────┼────────────┤
+  │ MRPC    │ ~575        │ 50    │ ~8%        │
+  ├─────────┼─────────────┼───────┼────────────┤
+  │ TyDi QA │ ~850        │ 100   │ ~12%       │
+  ├─────────┼─────────────┼───────┼────────────┤
+  │ SST-2   │ ~6,300      │ 300   │ ~5%        │
+  ├─────────┼─────────────┼───────┼────────────┤
+  │ IMDB    │ ~4,200      │ 300   │ ~7%        │
+  ├─────────┼─────────────┼───────┼────────────┤
+  │ SQuAD   │ ~5,500      │ 400   │ ~7%        │
+  ├─────────┼─────────────┼───────┼────────────┤
+  │ SNLI    │ ~51,500     │ 1000  │ ~2%        │
+  └─────────┴─────────────┴───────┴────────────┘
+
 ---

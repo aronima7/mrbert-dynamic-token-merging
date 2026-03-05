@@ -20,8 +20,16 @@
 | H  | MrBERT | SNLI  | 30%      | gate at layer 1             | mrbert-snli  | mrbert-snli-layer1      | 2    |
 | I  | MrBERT | SNLI  | 30%      | gate at layer 6             | mrbert-snli  | mrbert-snli-layer6      | 2    |
 | J  | MrBERT | SNLI  | 30%      | gate at layer 9             | mrbert-snli  | mrbert-snli-layer9      | 2    |
-| K  | BERT   | SQuAD | —        | baseline                    | mrbert-squad | bert-squad-baseline     | 1    |
-| L  | MrBERT | SQuAD | 30%      | main result                 | mrbert-squad | mrbert-squad-30pct      | 1    |
+| K  | BERT   | SQuAD   | —        | baseline                    | mrbert-squad  | bert-squad-baseline     | 1    |
+| L  | MrBERT | SQuAD   | 30%      | main result                 | mrbert-squad  | mrbert-squad-30pct      | 1    |
+| N  | BERT   | SST-2   | —        | baseline                    | mrbert-sst2   | bert-sst2-baseline      | 1    |
+| O  | MrBERT | SST-2   | 30%      | main result                 | mrbert-sst2   | mrbert-sst2-30pct       | 1    |
+| P  | BERT   | MRPC    | —        | baseline                    | mrbert-mrpc   | bert-mrpc-baseline      | 1    |
+| Q  | MrBERT | MRPC    | 30%      | main result                 | mrbert-mrpc   | mrbert-mrpc-30pct       | 1    |
+| R  | BERT   | IMDB    | —        | baseline                    | mrbert-imdb   | bert-imdb-baseline      | 1    |
+| S  | MrBERT | IMDB    | 30%      | main result                 | mrbert-imdb   | mrbert-imdb-30pct       | 1    |
+| T  | BERT   | TyDi QA | —        | baseline                    | mrbert-tydiqa | bert-tydiqa-baseline    | 1    |
+| U  | MrBERT | TyDi QA | 30%      | main result                 | mrbert-tydiqa | mrbert-tydiqa-30pct     | 1    |
 
 **Tier 1** = essential for the advisor meeting.
 **Tier 2** = adds depth for the gate layer ablation chart and PI controller ablation; launch alongside Tier 1 if bandwidth allows.
@@ -57,6 +65,34 @@ For each completed run, open W&B and copy the following values from the **Summar
 |-----|---------------|----------|---------------|---------------|-----------------------|
 | K   | BERT baseline | 0%       | `___`         | `___`         | 0                     |
 | L   | MrBERT 30%    | 30%      | `___`         | `___`         | `___`                 |
+
+### SST-2 Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/accuracy | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|-----------------------|
+| N   | BERT baseline | 0%       | `___`         | 0                     |
+| O   | MrBERT 30%    | 30%      | `___`         | `___`                 |
+
+### MRPC Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/accuracy | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|-----------------------|
+| P   | BERT baseline | 0%       | `___`         | 0                     |
+| Q   | MrBERT 30%    | 30%      | `___`         | `___`                 |
+
+### IMDB Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/accuracy | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|-----------------------|
+| R   | BERT baseline | 0%       | `___`         | 0                     |
+| S   | MrBERT 30%    | 30%      | `___`         | `___`                 |
+
+### TyDi QA Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/squad_em | test/squad_f1 | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|---------------|-----------------------|
+| T   | BERT baseline | 0%       | `___`         | `___`         | 0                     |
+| U   | MrBERT 30%    | 30%      | `___`         | `___`         | `___`                 |
 
 > **W&B tip:** In each run's Summary tab, search for `test/` to find all final test metrics. The metrics `seq_len_reduction_pct` and `new_seq_len` are under the eval prefix in the last logged step.
 
@@ -210,7 +246,6 @@ Saved file: `analysis/figures/gate_layer_ablation.pdf`
 | `analysis/figures/mrbert-snli-30pct_test_by_type.pdf`                        | Deletion rate by token type (word/subword/punct)           | Qualitative                         |
 | `analysis/figures/mrbert-snli-30pct_test_premise_vs_hyp.pdf`                 | Premise vs hypothesis deletion rate                        | Qualitative                         |
 | `analysis/deletion_patterns/mrbert-snli-30pct_test.json`                     | Per-token gate decisions, 1000 examples                    | For colored examples in slides      |
-| `analysis/deletion_patterns/mrbert-snli-30pct_test.json`     | Per-token gate decisions, 1000 examples                    | For colored examples in slides |
 
 ---
 
@@ -249,23 +284,38 @@ Key talking points:
 - Compare MrBERT 30% vs Random 30% — the learned gate should do better, proving the gate is learning
 - Show `snli_runtime_vs_deletion_percentage.pdf` — the actual measured speedup
 
-**4. Core Results — SQuAD (5 min)**
+**4. Core Results — SQuAD (3 min)**
 
-| Model         | EM    | F1    | Seq Δ  | Runtime  |
-|---------------|-------|-------|--------|----------|
-| BERT baseline | `___` | `___` | 0%     | `___` ms |
-| MrBERT 30%    | `___` | `___` | `___`% | `___` ms |
+| Model         | EM    | F1    | Seq Δ  |
+|---------------|-------|-------|--------|
+| BERT baseline | `___` | `___` | 0%     |
+| MrBERT 30%    | `___` | `___` | `___`% |
 
 Key talking point: QA requires extracting the exact answer span. The gate must preserve semantically critical context tokens. Does the accuracy hold up?
 
-**5. Ablations (5 min)**
+**5. Core Results — SST-2 / MRPC / IMDB / TyDi QA (3 min)**
+
+| Dataset  | Model         | Metric        | Score | Seq Δ  |
+|----------|---------------|---------------|-------|--------|
+| SST-2    | BERT baseline | accuracy      | `___` | 0%     |
+| SST-2    | MrBERT 30%    | accuracy      | `___` | `___`% |
+| MRPC     | BERT baseline | accuracy      | `___` | 0%     |
+| MRPC     | MrBERT 30%    | accuracy      | `___` | `___`% |
+| IMDB     | BERT baseline | accuracy      | `___` | 0%     |
+| IMDB     | MrBERT 30%    | accuracy      | `___` | `___`% |
+| TyDi QA  | BERT baseline | EM / F1       | `___` | 0%     |
+| TyDi QA  | MrBERT 30%    | EM / F1       | `___` | `___`% |
+
+Key talking point: does the accuracy-vs-deletion tradeoff observed on SNLI generalise across tasks and domains?
+
+**6. Ablations (5 min)**
 
 - `gate_layer_ablation.pdf`: earlier gate → faster but less accurate; layer 3 is the sweet spot
 - No PI controller: what happens to actual deletion rate without adaptive control?
 - Show `mrbert-snli-30pct_test_by_type.pdf`: which token types get deleted? (function words vs content words)
 - Show `mrbert-snli-30pct_test_premise_vs_hyp.pdf`: does the gate treat premise and hypothesis differently?
 
-**6. Discussion (10 min)**
+**7. Discussion (10 min)**
 
 - The efficiency frontier: how far down the tradeoff curve is acceptable for publication?
 - Does the gate learn linguistically meaningful patterns?

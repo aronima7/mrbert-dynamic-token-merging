@@ -55,7 +55,7 @@ from transformers import (
 )
 from dataclasses import dataclass, field
 from typing import Optional
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
 
 from configuration_mrbert import MrBertConfig
 from modeling_mrbert import (
@@ -135,6 +135,22 @@ class MrBertTrainingArguments(TrainingArguments):
     local_squad_dir: str = field(
         default="squad_datasets",
         metadata={"help": "Directory with local SQuAD NDJSON files (used when dataset_name='local_squad')"},
+    )
+    local_sst2_dir: str = field(
+        default="sst2_datasets",
+        metadata={"help": "Directory with local SST-2 NDJSON files (used when dataset_name='local_sst2')"},
+    )
+    local_mrpc_dir: str = field(
+        default="mrpc_datasets",
+        metadata={"help": "Directory with local MRPC NDJSON files (used when dataset_name='local_mrpc')"},
+    )
+    local_imdb_dir: str = field(
+        default="imdb_datasets",
+        metadata={"help": "Directory with local IMDB NDJSON files (used when dataset_name='local_imdb')"},
+    )
+    local_tydiqa_dir: str = field(
+        default="tydiqa_datasets",
+        metadata={"help": "Directory with local TyDi QA NDJSON files (used when dataset_name='local_tydiqa')"},
     )
     max_train_samples: Optional[int] = field(
         default=None,
@@ -407,6 +423,60 @@ def prepare_sequence_classification_dataset(args, tokenizer):
         )
         return dataset, DefaultDataCollator(), 3  # 3 labels: entailment, neutral, contradiction
 
+    if args.dataset_name == "local_sst2":
+        print(f"Loading LOCAL SST-2 dataset from: {args.local_sst2_dir}")
+        dataset = load_dataset(
+            "json",
+            data_files={
+                "train":      f"{args.local_sst2_dir}/sst2-train.json",
+                "validation": f"{args.local_sst2_dir}/sst2-validation.json",
+            },
+        )
+        return dataset, DefaultDataCollator(), 2  # 2 labels: negative, positive
+
+    if args.dataset_name == "local_mrpc":
+        print(f"Loading LOCAL MRPC dataset from: {args.local_mrpc_dir}")
+        dataset = load_dataset(
+            "json",
+            data_files={
+                "train":      f"{args.local_mrpc_dir}/mrpc-train.json",
+                "validation": f"{args.local_mrpc_dir}/mrpc-validation.json",
+                "test":       f"{args.local_mrpc_dir}/mrpc-test.json",
+            },
+        )
+        return dataset, DefaultDataCollator(), 2  # 2 labels: not paraphrase, paraphrase
+
+    if args.dataset_name == "local_imdb":
+        print(f"Loading LOCAL IMDB dataset from: {args.local_imdb_dir}")
+        dataset = load_dataset(
+            "json",
+            data_files={
+                "train":      f"{args.local_imdb_dir}/imdb-train.json",
+                "validation": f"{args.local_imdb_dir}/imdb-validation.json",
+                "test":       f"{args.local_imdb_dir}/imdb-test.json",
+            },
+        )
+        return dataset, DefaultDataCollator(), 2  # 2 labels: negative, positive
+
+    if args.dataset_name in ("imdb", "stanfordnlp/imdb"):
+        # IMDB has no validation split; carve 10% from training data
+        print(f"Loading IMDB dataset (with 90/10 train/validation split)...")
+        dataset = load_dataset(args.dataset_name)
+        train_val = dataset["train"].train_test_split(test_size=0.1, seed=42)
+        dataset = DatasetDict({
+            "train":      train_val["train"],
+            "validation": train_val["test"],
+            "test":       dataset["test"],
+        })
+
+        def tokenize_imdb(examples):
+            return tokenizer(examples["text"], truncation=True,
+                             max_length=args.max_seq_length, padding="max_length")
+
+        tokenized = dataset.map(tokenize_imdb, batched=True, desc="Tokenizing")
+        tokenized = tokenized.rename_column("label", "labels")
+        return tokenized, DefaultDataCollator(), 2
+
     print(f"Loading classification dataset: {args.dataset_name}/{args.dataset_config}")
     if args.dataset_config:
         dataset = load_dataset(args.dataset_name, args.dataset_config)
@@ -525,8 +595,32 @@ def prepare_question_answering_dataset(args, tokenizer):
         )
         return dataset, DefaultDataCollator()
 
+    if args.dataset_name == "local_tydiqa":
+        print(f"Loading LOCAL TyDi QA dataset from: {args.local_tydiqa_dir}")
+        dataset = load_dataset(
+            "json",
+            data_files={
+                "train":      f"{args.local_tydiqa_dir}/tydiqa-train.json",
+                "validation": f"{args.local_tydiqa_dir}/tydiqa-validation.json",
+                # TyDi QA has no public test set; reuse validation for final eval
+                "test":       f"{args.local_tydiqa_dir}/tydiqa-validation.json",
+            },
+        )
+        return dataset, DefaultDataCollator()
+
     print(f"Loading QA dataset: {args.dataset_name}")
-    dataset = load_dataset(args.dataset_name)
+    if args.dataset_config:
+        dataset = load_dataset(args.dataset_name, args.dataset_config)
+    else:
+        dataset = load_dataset(args.dataset_name)
+
+    # Filter TyDi QA for English-only examples (bert-base-uncased is primarily English)
+    if args.dataset_name == "tydiqa":
+        print("Filtering TyDi QA for English-only examples...")
+        dataset = DatasetDict({
+            split: dataset[split].filter(lambda x: x["id"].startswith("english-"))
+            for split in dataset.keys()
+        })
 
     def prepare_train_features(examples):
         tokenized_examples = tokenizer(

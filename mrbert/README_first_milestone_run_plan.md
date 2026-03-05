@@ -20,8 +20,16 @@
 | H  | MrBERT | SNLI  | 30%      | gate at layer 1             | mrbert-snli  | mrbert-snli-layer1      | 2    |
 | I  | MrBERT | SNLI  | 30%      | gate at layer 6             | mrbert-snli  | mrbert-snli-layer6      | 2    |
 | J  | MrBERT | SNLI  | 30%      | gate at layer 9             | mrbert-snli  | mrbert-snli-layer9      | 2    |
-| K  | BERT   | SQuAD | —        | baseline                    | mrbert-squad | bert-squad-baseline     | 1    |
-| L  | MrBERT | SQuAD | 30%      | main result                 | mrbert-squad | mrbert-squad-30pct      | 1    |
+| K  | BERT   | SQuAD   | —        | baseline                    | mrbert-squad  | bert-squad-baseline     | 1    |
+| L  | MrBERT | SQuAD   | 30%      | main result                 | mrbert-squad  | mrbert-squad-30pct      | 1    |
+| N  | BERT   | SST-2   | —        | baseline                    | mrbert-sst2   | bert-sst2-baseline      | 1    |
+| O  | MrBERT | SST-2   | 30%      | main result                 | mrbert-sst2   | mrbert-sst2-30pct       | 1    |
+| P  | BERT   | MRPC    | —        | baseline                    | mrbert-mrpc   | bert-mrpc-baseline      | 1    |
+| Q  | MrBERT | MRPC    | 30%      | main result                 | mrbert-mrpc   | mrbert-mrpc-30pct       | 1    |
+| R  | BERT   | IMDB    | —        | baseline                    | mrbert-imdb   | bert-imdb-baseline      | 1    |
+| S  | MrBERT | IMDB    | 30%      | main result                 | mrbert-imdb   | mrbert-imdb-30pct       | 1    |
+| T  | BERT   | TyDi QA | —        | baseline                    | mrbert-tydiqa | bert-tydiqa-baseline    | 1    |
+| U  | MrBERT | TyDi QA | 30%      | main result                 | mrbert-tydiqa | mrbert-tydiqa-30pct     | 1    |
 
 **Tier 1** = essential for the advisor meeting.
 **Tier 2** = adds depth for the gate layer ablation chart and PI controller ablation; launch alongside Tier 1 if bandwidth allows.
@@ -35,6 +43,10 @@
 | Phase 1   | Launch all runs (terminal commands)         | ~10 min             |
 | Phase 1   | Wait for SNLI runs to complete (A–J)        | ~90–100 min on A100 |
 | Phase 1   | Wait for SQuAD runs to complete (K–L)       | ~40 min on A100     |
+| Phase 1   | Wait for SST-2 runs to complete (N–O)       | ~15 min on A100     |
+| Phase 1   | Wait for MRPC runs to complete (P–Q)        | ~5 min on A100      |
+| Phase 1   | Wait for IMDB runs to complete (R–S)        | ~20 min on A100     |
+| Phase 1   | Wait for TyDi QA runs to complete (T–U)     | ~10 min on A100     |
 | Phase 2   | Download all checkpoints from Modal Volume  | ~15 min             |
 | Phase 3   | Capture metrics from W&B                    | ~10 min             |
 | Phase 4   | Runtime measurement (measure_runtime.py)    | ~10 min             |
@@ -100,11 +112,51 @@ modal run --detach train_modal.py::main --model-type MrBERT --task sequence_clas
 ### SQuAD — Tier 1 Core (Runs K, L)
 
 ```bash
-modal run --detach train_modal.py::main --model-type BERT --task question_answering --num-epochs 3 --max-steps -1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name bert-squad-baseline
+modal run --detach train_modal.py::main --model-type BERT --task question_answering --dataset-name local_squad --num-epochs 3 --max-steps -1 --batch-size 16 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name bert-squad-baseline
 ```
 
 ```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name mrbert-squad-30pct
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_squad --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 400 --mode training-and-eval --wandb-project mrbert-squad --wandb-run-name mrbert-squad-30pct
+```
+
+### SST-2 — Tier 1 Core (Runs N, O)
+
+```bash
+modal run --detach train_modal.py::main --model-type BERT --task sequence_classification --dataset-name local_sst2 --num-epochs 3 --max-steps -1 --batch-size 32 --mode training-and-eval --wandb-project mrbert-sst2 --wandb-run-name bert-sst2-baseline
+```
+
+```bash
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --dataset-name local_sst2 --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 32 --regularizer-delay 300 --mode training-and-eval --wandb-project mrbert-sst2 --wandb-run-name mrbert-sst2-30pct
+```
+
+### MRPC — Tier 1 Core (Runs P, Q)
+
+```bash
+modal run --detach train_modal.py::main --model-type BERT --task sequence_classification --dataset-name local_mrpc --num-epochs 5 --max-steps -1 --batch-size 16 --mode training-and-eval --wandb-project mrbert-mrpc --wandb-run-name bert-mrpc-baseline
+```
+
+```bash
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --dataset-name local_mrpc --num-epochs 5 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 50 --mode training-and-eval --wandb-project mrbert-mrpc --wandb-run-name mrbert-mrpc-30pct
+```
+
+### IMDB — Tier 1 Core (Runs R, S)
+
+```bash
+modal run --detach train_modal.py::main --model-type BERT --task sequence_classification --dataset-name local_imdb --num-epochs 3 --max-steps -1 --batch-size 16 --mode training-and-eval --wandb-project mrbert-imdb --wandb-run-name bert-imdb-baseline
+```
+
+```bash
+modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --dataset-name local_imdb --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 300 --mode training-and-eval --wandb-project mrbert-imdb --wandb-run-name mrbert-imdb-30pct
+```
+
+### TyDi QA — Tier 1 Core (Runs T, U)
+
+```bash
+modal run --detach train_modal.py::main --model-type BERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --batch-size 16 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name bert-tydiqa-baseline
+```
+
+```bash
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 100 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-30pct
 ```
 
 ---
@@ -122,7 +174,7 @@ mkdir -p ./local_checkpoints/bert-snli/final && modal volume get mrbert-checkpoi
 The above pattern is cumbersome for full checkpoints. Instead, download each run's `final/` directory by listing its contents first and downloading file by file, or use:
 
 ```bash
-for run in bert-snli-baseline mrbert-snli-0pct mrbert-snli-30pct mrbert-snli-30pct-hd mrbert-snli-50pct mrbert-snli-70pct mrbert-snli-random30 mrbert-snli-layer1 mrbert-snli-layer6 mrbert-snli-layer9 bert-squad-baseline mrbert-squad-30pct; do
+for run in bert-snli-baseline mrbert-snli-0pct mrbert-snli-30pct mrbert-snli-30pct-hd mrbert-snli-50pct mrbert-snli-70pct mrbert-snli-random30 mrbert-snli-layer1 mrbert-snli-layer6 mrbert-snli-layer9 bert-squad-baseline mrbert-squad-30pct bert-sst2-baseline mrbert-sst2-30pct bert-mrpc-baseline mrbert-mrpc-30pct bert-imdb-baseline mrbert-imdb-30pct bert-tydiqa-baseline mrbert-tydiqa-30pct; do
   mkdir -p ./local_checkpoints/${run}/final
   for f in config.json tokenizer_config.json vocab.txt special_tokens_map.json model.safetensors; do
     modal volume get mrbert-checkpoints ${run}/final/${f} ./local_checkpoints/${run}/final/${f} 2>/dev/null || true
@@ -163,6 +215,34 @@ For each completed run, open W&B and copy the following values from the **Summar
 |-----|---------------|----------|---------------|---------------|-----------------------|
 | K   | BERT baseline | 0%       | `___`         | `___`         | 0                     |
 | L   | MrBERT 30%    | 30%      | `___`         | `___`         | `___`                 |
+
+### SST-2 Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/accuracy | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|-----------------------|
+| N   | BERT baseline | 0%       | `___`         | 0                     |
+| O   | MrBERT 30%    | 30%      | `___`         | `___`                 |
+
+### MRPC Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/accuracy | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|-----------------------|
+| P   | BERT baseline | 0%       | `___`         | 0                     |
+| Q   | MrBERT 30%    | 30%      | `___`         | `___`                 |
+
+### IMDB Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/accuracy | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|-----------------------|
+| R   | BERT baseline | 0%       | `___`         | 0                     |
+| S   | MrBERT 30%    | 30%      | `___`         | `___`                 |
+
+### TyDi QA Results Table (fill in from W&B)
+
+| Run | Model         | Del Rate | test/squad_em | test/squad_f1 | seq_len_reduction_pct |
+|-----|---------------|----------|---------------|---------------|-----------------------|
+| T   | BERT baseline | 0%       | `___`         | `___`         | 0                     |
+| U   | MrBERT 30%    | 30%      | `___`         | `___`         | `___`                 |
 
 > **W&B tip:** In each run's Summary tab, search for `test/` to find all final test metrics. The metrics `seq_len_reduction_pct` and `new_seq_len` are under the eval prefix in the last logged step.
 
