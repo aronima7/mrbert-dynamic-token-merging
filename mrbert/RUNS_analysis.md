@@ -540,3 +540,128 @@ modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps
   This directly answers advisor question #3 from your list: "Is the hard vs soft deletion comparison important to include?" — yes, and the answer is that both work, which is a clean result.
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Q&A
+
+  Computing SQuAD EM/F1 on 447 features...                                                                                                                                                               
+                                                                                                                                                                                                       
+  SQuAD Results (442 features with answer in window):                                                                                                                                                  
+    Exact Match (EM): 16.29%                                                                                                                                                                           
+    F1 Score:         28.26% is that a good result?                                                                                                                                                    
+
+⏺ In absolute terms, no — these are low numbers. For context:
+
+  ┌───────────────────────────┬────────────────────────────┬─────────┬─────────┐                                                                                                                           
+  │           Model           │          Dataset           │   EM    │   F1    │
+  ├───────────────────────────┼────────────────────────────┼─────────┼─────────┤                                                                                                                           
+  │ BERT-base (fully trained) │ SQuAD v1.1                 │ ~80%    │ ~88%    │
+  ├───────────────────────────┼────────────────────────────┼─────────┼─────────┤
+  │ BERT-base (fully trained) │ TyDi QA (primary)          │ ~60–65% │ ~70–75% │
+  ├───────────────────────────┼────────────────────────────┼─────────┼─────────┤
+  │ Your run                  │ TyDi QA (SQuAD-style eval) │ 16.3%   │ 28.3%   │
+  └───────────────────────────┴────────────────────────────┴─────────┴─────────┘
+
+  But the absolute number isn't really the point. A few things to consider:
+
+  Reasons the number is low:
+  1. Short training — if this was a limited-step run, the model barely learned the task
+  2. Token deletion hurts QA specifically — QA is the task most sensitive to deletion because the answer span could literally be in a deleted token. 30% deletion on a QA task is aggressive
+  3. TyDi QA is harder than SQuAD — it's multilingual, has yes/no questions, and abstractive answers; span-based EM/F1 undersells it even for a well-trained model
+  4. SQuAD-style eval on TyDi QA is approximate — the compute_squad_em_f1 function in the code notes it's a "lightweight approximation" without full answer normalization
+
+  What actually matters:
+  The meaningful comparison is MrBERT vs. baseline BERT trained the same way on the same data for the same steps. If baseline BERT gets 20% EM and MrBERT gets 16% EM with 30% fewer tokens processed,
+  that's actually a reasonable efficiency/accuracy trade-off — and the interesting finding.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Looking at the numbers carefully, there are several things to flag here.
+                                                                                                                                                                                                           
+  ---                                                                                                                                                                                                      
+  Performance Summary                                                                                                                                                                                      
+                                                                                                                                                                                                           
+  ┌────────────┬───────────────┬─────────────────────┬────────┐
+  │   Metric   │ BERT baseline │ MrBERT (30% target) │ Delta  │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ SQuAD EM   │ 38.91%        │ 16.29%              │ -22.6% │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ SQuAD F1   │ 52.24%        │ 28.26%              │ -23.9% │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ Span EM    │ 39.82%        │ 14.54%              │ -25.3% │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ Start acc  │ 53.24%        │ 30.65%              │ -22.6% │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ End acc    │ 50.34%        │ 25.28%              │ -25.1% │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ Test loss  │ 1.856         │ 2.872               │ +55%   │
+  ├────────────┼───────────────┼─────────────────────┼────────┤
+  │ Throughput │ 195 samples/s │ 156 samples/s       │ -20%   │
+  └────────────┴───────────────┴─────────────────────┴────────┘
+
+  ---
+  Three Critical Problems
+
+  1. Gate collapse — over-deleting 2× the target
+
+  target_deletion_rate:          0.30  (30%)
+  percent_non_pad_deleted_tokens: 60.68%  (actual)
+  seq_len_reduction_pct:          84.34%
+  new_seq_len:                    60.1  /  384 tokens
+
+  The gate is deleting 60% of non-pad tokens instead of 30%, and reducing effective sequence length by 84%. The model is keeping only ~60 of 384 tokens on average.
+
+  2. delete_gate_average: -24.3 is a red flag
+
+  Gate outputs should be in [0, 1] after sigmoid. A mean of -24.3 means the pre-sigmoid logits have collapsed to very large negative values → sigmoid(-24) ≈ 0 → almost every token is being scored for
+  deletion. The PI controller kept pushing α up to compensate, which made things worse in a feedback loop. regularizer_delay=100 is almost certainly too short for a QA task — at 850 total steps, the
+  regularizer kicks in at step 100 while the model is still barely learning span positions.
+
+  3. Soft deletion gives no actual speedup
+
+  Despite 84% token reduction in gate scores, MrBERT is 20% slower (156 vs 195 samples/sec). This is expected — soft deletion keeps all tokens in the sequence and just adds large negative attention
+  biases. The compute cost is unchanged. You only get real throughput gains with hard deletion (--hard-delete-train-prob > 0).
+
+  ---
+  Recommended Next Steps
+
+  ┌───────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │            Problem            │                                                        Fix                                                        │
+  ├───────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Gate collapse / over-deletion │ Increase --regularizer-delay (try 300–500 for QA, ~40% of total steps)                                            │
+  ├───────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ PI controller runaway         │ Lower --controller-p and --controller-i for QA (it's a harder task, needs slower adaptation)                      │
+  ├───────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ No throughput gain            │ Add --hard-delete-train-prob 0.5 to actually remove tokens during training, enabling real speedup at inference    │
+  ├───────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ QA sensitivity                │ Consider --target-deletion-rate 0.1 or 0.2 instead of 0.3 — QA answer spans need more context than classification │
+  └───────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  The BERT baseline result (38.9% EM, 52.2% F1) is reasonable for 3 epochs on TyDi QA English with a 384-token window — that's a fair baseline. The MrBERT gap is a training instability issue, not a
+  fundamental architectural one.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+>> rerun with regularizer-delay 400 and target-deletion-rate 0.2
+--------------------
+❯ why is no accuracy being reported for train, eval and test in wandb?                                                                                                                                     
+                                                                       
+⏺ Searched for 2 patterns, read 1 file (ctrl+o to expand)                                                                                                                                                  
+                                                                                                                                                                                                           
+⏺ That confirms it. QuestionAnsweringModelOutput (and by extension MrBertQuestionAnsweringOutput) has no .logits field — only start_logits and end_logits. The accuracy block in compute_loss silently     
+  skips:                     
+                                                                                                                                                                                                           
+  # train_mrbert.py:1145                                                                                                                                                                                   
+  if hasattr(outputs, "logits") and outputs.logits is not None and "labels" in inputs:                                                                                                                     
+      ...  # never reached for QA                                                                                                                                                                          
+                  
+  And make_qa_compute_metrics() returns start_acc, end_acc, span_em — not accuracy — so eval/accuracy is also never set.
+
+  Nothing is broken — accuracy just isn't the right metric for QA. The equivalent metrics are already being reported:
+
+  ┌───────────────────┬───────────────────────────────────────────────────────────┐
+  │ What you'd expect │               What's actually logged for QA               │
+  ├───────────────────┼───────────────────────────────────────────────────────────┤
+  │ train/accuracy    │ (nothing — QA has no single logits)                       │
+  ├───────────────────┼───────────────────────────────────────────────────────────┤
+  │ eval/accuracy     │ eval/start_acc, eval/end_acc, eval/span_em                │
+  ├───────────────────┼───────────────────────────────────────────────────────────┤
+  │ test/accuracy     │ test_start_acc, test_end_acc, test_span_em, + SQuAD EM/F1 │
+  └───────────────────┴───────────────────────────────────────────────────────────┘
+
+  The test/accuracy entry in custom_keys (line 1380 in train_mrbert.py) is also harmless — it just won't find anything to re-log since accuracy was never written to _last_logs for QA runs.
+------------------------

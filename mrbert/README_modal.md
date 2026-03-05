@@ -48,7 +48,8 @@ modal run --detach train_modal.py::main --task sequence_classification --dataset
 ---
 
 ## TyDi QA (English)
-~3.7k English examples → ~4.5k features · 384 tokens · ~850 steps/3 epochs
+~3.2k English examples → ~3.2k features · 384 tokens · ~600 steps/3 epochs
+(GoldP passages are pre-cropped and short; sliding window rarely fires, giving ~1.02x expansion vs the ~1.22x assumed for SQuAD)
 
 ```bash
 # MrBERT
@@ -59,6 +60,8 @@ modal run --detach train_modal.py::main --task question_answering --dataset-name
 # BERT baseline
 modal run --detach train_modal.py::main --task question_answering --dataset-name local_tydiqa --model-type BERT --max-steps -1 --num-epochs 3 --batch-size 16 --mode training-and-eval --wandb-run-name bert-tydiqa-baseline --wandb-project mrbert-tydiqa
 ```
+0% deletion rate
+modal run --detach train_modal.py::main --task question_answering --dataset-name local_tydiqa --model-type MrBERT --max-steps -1 --num-epochs 3 --batch-size 16 --regularizer-delay 100 --target-deletion-rate 0.0 --deletion-loss-weight 0.0 --mode training-and-eval --wandb-run-name mrbert-tydiqa-0pct --wandb-project mrbert-tydiqa
 
 ---
 
