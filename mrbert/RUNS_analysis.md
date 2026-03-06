@@ -665,3 +665,108 @@ modal run --detach train_modal.py --model-type MrBERT --num-epochs 3 --max-steps
 
   The test/accuracy entry in custom_keys (line 1380 in train_mrbert.py) is also harmless — it just won't find anything to re-log since accuracy was never written to _last_logs for QA runs.
 ------------------------
+
+❯ analyze the traininga, eval and test charts for tydiqa - why are the bert baseline and 0% deletion rate charts not matching up?                                                                          
+  ⎿  [Image #1]                                                                                                                                                                                            
+  ⎿  [Image #2]                                                                                                                                                                                            
+  ⎿  [Image #3]                                                                                                                                                                                            
+  ⎿  [Image #4]                                                                                                                                                                                            
+  ⎿  [Image #5]                                                                                                                                                                                            
+  ⎿  [Image #6]                                                                                                                                                                                            
+  ⎿  [Image #7]   
+  ⎿  [Image #8]
+  ⎿  [Image #9]
+
+⏺ Here's a full breakdown of what the charts are showing.
+
+  ---                                                                                                                                                                                                      
+  TL;DR
+                                                                                                                                                                                                           
+  MrBERT-0pct and BERT baseline are not matched in performance despite 0% deletion target because the gate is still actively suppressing tokens in attention even with deletion_loss_weight=0 — it has no
+  training signal to stay neutral, so it collapses.
+
+  ---
+  Train Charts
+
+  Loss gap (cross_entropy_loss / loss)
+
+  ┌───────────────┬─────────────────────┐
+  │      Run      │ Final train CE loss │
+  ├───────────────┼─────────────────────┤
+  │ BERT baseline │ ~1.8                │
+  ├───────────────┼─────────────────────┤
+  │ MrBERT-0pct   │ ~2.9                │
+  └───────────────┴─────────────────────┘
+
+  BERT learns the task well. MrBERT-0pct plateaus at nearly 60% higher loss despite identical architecture below the gate layer. This is the gate collapse problem.
+
+  delete_gate_average: ~-24.5 and drifting toward -25
+
+  The gate output values (attention biases) average -24.5 out of a possible range of [-30, 0]. This means almost every token is getting a ~-24 negative attention bias applied at every subsequent layer.
+  The gate is behaving as if deleting ~80% of tokens, even though deletion_loss_weight=0 means there's no gradient to correct it.
+
+  delete_gate_max_value: exactly 0.0 (flat)
+
+  The maximum gate value per sequence is always exactly 0. This means a handful of tokens per sequence (likely [CLS]/[SEP], which are protected) get zero bias — everything else is being suppressed. The
+  gate has collapsed to "delete everything except protected tokens."
+
+  delete_gate_min_value: ~-29.95
+
+  Tokens at the bottom are getting the full -30 scale applied. The gate is fully saturated at the deletion end.
+
+  new_seq_len: rising from ~15 → ~60
+
+  Only 15–60 tokens out of 384 are above the deletion threshold at any point. This is severe — ~84–95% of the sequence is effectively invisible to subsequent attention layers. The slow improvement
+  (15→60) shows the gate slightly recovering over training but never getting close to normal.
+
+  Step count difference (train/global_step)
+
+  BERT runs to ~700 steps, MrBERT-0pct to ~600. This means the datasets have slightly different sizes — the preprocessed tydiqa-train.json was likely regenerated between runs and came out with a few
+  hundred fewer features. Both used the same --max-steps -1 and --num-epochs 3 flags.
+
+  ---
+  Eval Charts
+
+  ┌─────────────────────────┬───────────────┬─────────────┐
+  │         Metric          │ BERT baseline │ MrBERT-0pct │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ eval/loss (final)       │ ~1.9          │ ~2.8        │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ eval/start_acc (final)  │ ~0.52         │ ~0.30       │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ eval/span_em (final)    │ ~0.40         │ ~0.15       │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ eval/samples_per_second │ ~190          │ ~160        │
+  └─────────────────────────┴───────────────┴─────────────┘
+
+  MrBERT-0pct is 16% slower than BERT at eval time despite supposedly doing "no deletion" — confirming that the gate computation and attention bias overhead costs real throughput with no benefit.
+
+  ---
+  Test Charts
+
+  ┌─────────────────────────┬───────────────┬─────────────┐
+  │         Metric          │ BERT baseline │ MrBERT-0pct │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ test/cross_entropy_loss │ ~1.85         │ ~2.7        │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ test/span_em            │ ~0.35         │ ~0.15       │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ test/start_acc          │ ~0.53         │ ~0.35       │
+  ├─────────────────────────┼───────────────┼─────────────┤
+  │ test/end_acc            │ ~0.50         │ ~0.22       │
+  └─────────────────────────┴───────────────┴─────────────┘
+
+  ---
+  Root Cause
+
+  Without any deletion loss (deletion_loss_weight=0), the gate has no gradient incentive to produce neutral (near-zero) attention biases. The gate parameters are updated only through backprop from the QA
+   task loss, and the task loss gradient inadvertently pushes the gate toward suppressing most context tokens — likely because suppressing ambiguous context slightly reduces QA loss in early steps,
+  creating a destructive feedback loop.
+
+  This means deletion_loss_weight=0 is not a valid control condition for "MrBERT with no deletion." The gate needs to be either:
+  1. Frozen at zero (gate parameters held fixed, no bias added), or
+  2. Driven by a loss that keeps it near zero (e.g. target_deletion_rate=0 with a small positive deletion_loss_weight like 0.01)
+
+  For the paper, this result is actually useful — it demonstrates that the deletion regularizer is load-bearing not just for controlling deletion rate but for preventing gate collapse entirely.
+
+

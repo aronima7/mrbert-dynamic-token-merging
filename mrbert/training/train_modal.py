@@ -117,6 +117,8 @@ def train(
     deletion_loss_weight: float = 0.1,
     batch_size: int = 32,
     regularizer_delay: int = 1000,
+    bypass_gate: bool = False,
+    use_gumbel_noise: bool = True,
     extra_args: list[str] | None = None,
 ):
     """
@@ -144,6 +146,8 @@ def train(
         batch_size: Training (and eval) batch size (default: 32). Use 16 for 384–512 token tasks.
         regularizer_delay: Steps before deletion pressure is applied (default: 1000). Scale down
             proportionally for small datasets (e.g. 100 for MRPC, 300 for SST-2/IMDB).
+        bypass_gate: Skip the delete gate entirely — no attention bias is added. Makes MrBERT
+            architecturally identical to BERT. Use as the clean 0%-deletion control condition.
         extra_args: Optional list of extra CLI args, e.g. ["--learning_rate", "3e-5"].
     """
     os.chdir("/workspace/training")
@@ -248,6 +252,10 @@ def train(
         cmd.extend(["--hard_delete_train_prob", str(hard_delete_train_prob)])
     if not use_pi_controller:
         cmd.append("--no_use_pi_controller")
+    if bypass_gate:
+        cmd.append("--bypass_gate")
+    if not use_gumbel_noise:
+        cmd.append("--no_use_gumbel_noise")
     if wandb_run_name:
         cmd.extend(["--wandb_run_name", wandb_run_name])
     if wandb_project:
@@ -556,6 +564,8 @@ def main(
     deletion_loss_weight: float = 0.1,
     batch_size: int = 32,
     regularizer_delay: int = 1000,
+    bypass_gate: bool = False,
+    use_gumbel_noise: bool = True,
 ):
     """
     Entrypoint for `modal run train_modal.py [--task ...] [--dataset-name ...] [--model-type MrBERT|BERT] ...`.
@@ -585,4 +595,6 @@ def main(
         deletion_loss_weight=deletion_loss_weight,
         batch_size=batch_size,
         regularizer_delay=regularizer_delay,
+        bypass_gate=bypass_gate,
+        use_gumbel_noise=use_gumbel_noise,
     )

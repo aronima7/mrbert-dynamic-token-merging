@@ -56,6 +56,7 @@ class MrBertConfig(BertConfig):
         random_deletion_probability: float = 0.5,
         fixed_deletion_amount: float = 0.5,
         use_gumbel_noise: bool = False,
+        bypass_gate: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -68,3 +69,4 @@ class MrBertConfig(BertConfig):
         self.random_deletion_probability = random_deletion_probability
         self.fixed_deletion_amount = fixed_deletion_amount
         self.use_gumbel_noise = use_gumbel_noise
+        self.bypass_gate = bypass_gate

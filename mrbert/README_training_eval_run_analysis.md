@@ -240,3 +240,85 @@ Stop the run and adjust parameters if by the end of epoch 1 (~17,168 steps):
 - `percent_non_pad_deleted_tokens` > 70% consistently (gate has collapsed)
 - `delete_gate_std` < 0.1 (gate not discriminating)
 - `new_seq_len` < 5 tokens (almost all content deleted)
+-------------
+❯ what would be the parameters to tweak to get 0% mrbert to be the same as bert baseline without bypassing the gate?                                                                                       
+                                                                                                                     
+⏺ The root problem is the gate initialization, not the training hyperparameters. Understanding this makes the levers clear:                                                                                
+                                                                                                                                                                                                         
+  What's happening:                                                                                                                                                                                        
+  bias_init = +10  →  sigmoid(10) ≈ 1.0  →  attention_bias ≈ -30  (max deletion from step 0)
+  The gate starts maximally deleting and has to learn its way back to neutral. With deletion_loss_weight=0.1, the pink run moved 85% → 65% over 600 steps — about 20% reduction. To reach 0% needs ~4× more
+   signal.        
+
+  Parameters to tweak:
+
+  ┌────────────────────────┬─────────────────────┬───────────────┬────────────────────────────────────────────────────────────────────────────────┐
+  │       Parameter        │ Current (0_1wt run) │  Recommended  │                                      Why                                       │
+  ├────────────────────────┼─────────────────────┼───────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ --deletion-loss-weight │ 0.1                 │ 1.0 – 2.0     │ 10–20× stronger push toward 0% deletion                                        │
+  ├────────────────────────┼─────────────────────┼───────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ --regularizer-delay    │ 100                 │ 0             │ Don't waste steps — gate correction needs to start immediately                 │
+  ├────────────────────────┼─────────────────────┼───────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ --no-use-pi-controller │ off                 │ add this flag │ PI controller adapts α based on error; with fixed high α it's more predictable │
+  └────────────────────────┴─────────────────────┴───────────────┴────────────────────────────────────────────────────────────────────────────────┘
+
+  modal run --detach train_modal.py::main \
+    --model-type MrBERT \
+    --task question_answering \
+    --dataset-name local_tydiqa \
+    --num-epochs 3 --max-steps -1 --batch-size 16 \
+    --target-deletion-rate 0.0 \
+    --deletion-loss-weight 1.0 \
+    --regularizer-delay 0 \
+    --no-use-pi-controller \
+    --mode training-and-eval \
+    --wandb-project mrbert-tydiqa \
+    --wandb-run-name mrbert-tydiqa-0pct-1wt
+
+  The honest caveat: there's a fundamental tension — a deletion_loss_weight high enough to overcome the bias=10 initialization in only 600 steps may dominate the task loss early in training, hurting QA
+  learning. The gate is fighting against its initialization while simultaneously trying to learn span prediction. You'd need to watch train/cross_entropy_loss vs train/delete_gate_loss to check they're
+  balanced.
+
+  The clean fix is a one-line code change in _init_delete_gates() — change bias=10 to bias=-10 when target_deletion_rate=0. That makes sigmoid(-10) ≈ 0 → attention_bias ≈ 0 from step 0, so even a small
+  deletion loss weight keeps the gate neutral with no initialization fight. Want me to add a gate_init_bias config parameter for this?
+
+⏺ Do not change the bias. My suggestion was based on a sign error. The math shows the current initialization is already correct:                                                                           
+                                                                                                                                                                                                           
+  ScaledSigmoid(x) = -30 × sigmoid(-x)                                                                                                                                                                     
+                                                                                                                                                                                                           
+  bias = +10  →  logit ≈ +10  →  -30 × sigmoid(-10) ≈ -30 × 0.00005 ≈  0.0   → KEEP  ✓                                                                                                                     
+  bias = -10  →  logit ≈ -10  →  -30 × sigmoid(+10) ≈ -30 × 0.9999  ≈ -30.0  → DELETE ✗                                                                                                                    
+                                                                                                                                                                                                         
+  bias=+10 already starts the gate at near-zero attention bias (keep all tokens). Changing to -10 would do the opposite — start at maximum deletion. It would make the 0% run worse, not better.
+
+  ---
+  What's actually causing the collapse
+
+  The gate initializes correctly at ≈0, but collapses to 85% deletion within the first 50 steps due to two forces:
+
+  1. Gumbel noise (use_gumbel_noise=True is hardcoded in train_mrbert.py:703).
+  Gumbel distribution has a heavy left tail — occasional large negative samples push logit below 0, which causes a large spike in gate value (toward -30). At logit=-5, the sigmoid gradient is large, so
+  the task loss gradient locks the gate there permanently.
+
+  2. QA task loss gradient pushes the gate to delete tokens.
+  Suppressing most context tokens makes the softmax over 384 positions sharper/lower-variance in early training. The model "learns" to collapse attention — a local minimum that looks good short-term but
+  destroys performance.
+
+  Without a deletion loss to oppose these forces, the gate never recovers.
+
+  ---
+  Actual fixes without bypass_gate
+
+  ┌──────────────────────────────────┬─────────────────────────────────────────────────────────────────────────┐
+  │               Fix                │                                   How                                   │
+  ├──────────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
+  │ Disable Gumbel noise             │ Pass use_gumbel_noise=False in config (currently hardcoded to True)     │
+  ├──────────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
+  │ Strong deletion loss from step 0 │ --deletion-loss-weight 1.0 --regularizer-delay 0 --no-use-pi-controller │
+  └──────────────────────────────────┴─────────────────────────────────────────────────────────────────────────┘
+
+  Disabling Gumbel noise is the more targeted fix — it removes the stochastic kick that starts the collapse. Want me to add use_gumbel_noise as a training arg so it can be controlled from the CLI? Right
+  now it's hardcoded to True regardless of target deletion rate.
+
+-------------
+

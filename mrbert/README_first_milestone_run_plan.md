@@ -149,10 +149,14 @@ modal run --detach train_modal.py::main --model-type BERT --task sequence_classi
 modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --dataset-name local_imdb --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 300 --mode training-and-eval --wandb-project mrbert-imdb --wandb-run-name mrbert-imdb-30pct
 ```
 
-### TyDi QA — Tier 1 Core (Runs T, U)
+### TyDi QA — Tier 1 Core (Runs T, U, W)
 
 ```bash
 modal run --detach train_modal.py::main --model-type BERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --batch-size 16 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name bert-tydiqa-baseline
+```
+
+```bash
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --target-deletion-rate 0 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 100 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-0pct-0_1wt
 ```
 
 ```bash

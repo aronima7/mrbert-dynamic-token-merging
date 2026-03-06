@@ -1786,5 +1786,32 @@ python training/train_mrbert.py --task question_answering --dataset_name local_t
   ├─────────┼─────────────┼───────┼────────────┤
   │ SNLI    │ ~51,500     │ 1000  │ ~2%        │
   └─────────┴─────────────┴───────┴────────────┘
-
 ---
+  modal run --detach train_modal.py::main \
+    --task question_answering \
+    --dataset-name local_tydiqa \
+    --model-type MrBERT \
+    --max-steps -1 \
+    --num-epochs 3 \
+    --batch-size 16 \
+    --bypass-gate \
+    --mode training-and-eval \
+    --wandb-run-name mrbert-tydiqa-bypass \
+    --wandb-project mrbert-tydiqa
+
+  Summary of what changed:
+
+  ┌─────────────────────────┬──────────────────────────────────────────────────────────────────────────────────┐
+  │          File           │                                      Change                                      │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+  │ configuration_mrbert.py │ Added bypass_gate: bool = False field                                            │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+  │ modeling_mrbert.py      │ Gate skipped when config.bypass_gate=True (one-line guard on the gate condition) │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+  │ train_mrbert.py         │ Added --bypass_gate to MrBertTrainingArguments + passed to MrBertConfig          │
+  ├─────────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+  │ train_modal.py          │ Added bypass_gate param + --bypass_gate forwarded to CLI                         │
+  └─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────┘
+
+  With --bypass-gate, the gate module still exists in the model (same parameter count) but produces no attention bias — making it a true BERT-equivalent for comparison.
+-------------

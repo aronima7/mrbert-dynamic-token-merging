@@ -491,6 +491,7 @@ class MrBertLayer(nn.Module):
         
         # Delete gate
         self.has_delete_gate = has_delete_gate
+        self.bypass_gate = getattr(config, "bypass_gate", False)
         if has_delete_gate:
             if config.deletion_type == "scaled_sigmoid":
                 self.delete_gate = SigmoidDeleteGate(config)
@@ -568,8 +569,8 @@ class MrBertLayer(nn.Module):
         delete_gate_logits = None
         new_attention_mask = attention_mask
         
-        # Apply delete gate if this layer has one
-        if self.has_delete_gate and input_ids is not None:
+        # Apply delete gate if this layer has one and bypass_gate is not set
+        if self.has_delete_gate and input_ids is not None and not self.bypass_gate:
             delete_gate_values, delete_gate_logits = self.delete_gate(hidden_states, input_ids)
             delete_gate_mask = delete_gate_values
             

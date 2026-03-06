@@ -110,6 +110,14 @@ class MrBertTrainingArguments(TrainingArguments):
         default=-15.0,
         metadata={"help": "Gate value below which a token is counted as deleted (= sigmoid_mask_scale / 2 by default)"},
     )
+    bypass_gate: bool = field(
+        default=False,
+        metadata={"help": "Skip the delete gate entirely (no attention bias added). Makes MrBERT architecturally identical to BERT. Useful as a 0%%-deletion control condition."},
+    )
+    use_gumbel_noise: bool = field(
+        default=True,
+        metadata={"help": "Add Gumbel noise to gate logits during training for exploration. Set to False for 0%%-deletion control runs to prevent stochastic gate collapse."},
+    )
 
     # ---- Dataset ----
     task: str = field(
@@ -700,8 +708,9 @@ def create_model(args, tokenizer, num_labels=None):
             deletion_type=args.deletion_type,
             delete_gate_layer=args.delete_gate_layer,
             sigmoid_mask_scale=args.sigmoid_mask_scale,
-            use_gumbel_noise=True,       # adds exploration noise to the gate during training
+            use_gumbel_noise=args.use_gumbel_noise,
             use_softmax1=args.use_softmax1,
+            bypass_gate=args.bypass_gate,
         )
         # Load pretrained BERT weights; the delete gate is absent from the checkpoint
         # so it gets randomly initialised by _init_delete_gates() (bias=10, weight_std=0.001).
