@@ -119,6 +119,7 @@ def train(
     regularizer_delay: int = 1000,
     bypass_gate: bool = False,
     use_gumbel_noise: bool = True,
+    use_pre_deletion_blend: bool = True,
     extra_args: list[str] | None = None,
 ):
     """
@@ -256,6 +257,8 @@ def train(
         cmd.append("--bypass_gate")
     if not use_gumbel_noise:
         cmd.append("--no_use_gumbel_noise")
+    if not use_pre_deletion_blend:
+        cmd.append("--no_use_pre_deletion_blend")
     if wandb_run_name:
         cmd.extend(["--wandb_run_name", wandb_run_name])
     if wandb_project:
@@ -566,6 +569,7 @@ def main(
     regularizer_delay: int = 1000,
     bypass_gate: bool = False,
     use_gumbel_noise: bool = True,
+    use_pre_deletion_blend: bool = True,
 ):
     """
     Entrypoint for `modal run train_modal.py [--task ...] [--dataset-name ...] [--model-type MrBERT|BERT] ...`.
@@ -597,4 +601,5 @@ def main(
         regularizer_delay=regularizer_delay,
         bypass_gate=bypass_gate,
         use_gumbel_noise=use_gumbel_noise,
+        use_pre_deletion_blend=use_pre_deletion_blend,
     )

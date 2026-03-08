@@ -118,6 +118,10 @@ class MrBertTrainingArguments(TrainingArguments):
         default=True,
         metadata={"help": "Add Gumbel noise to gate logits during training for exploration. Set to False for 0%%-deletion control runs to prevent stochastic gate collapse."},
     )
+    use_pre_deletion_blend: bool = field(
+        default=True,
+        metadata={"help": "For deleted tokens, blend in their pre-deletion (layer gate_layer-1) hidden state instead of the corrupted post-deletion representation. Helps QA tasks where answer spans may be deleted."},
+    )
 
     # ---- Dataset ----
     task: str = field(
@@ -711,6 +715,7 @@ def create_model(args, tokenizer, num_labels=None):
             use_gumbel_noise=args.use_gumbel_noise,
             use_softmax1=args.use_softmax1,
             bypass_gate=args.bypass_gate,
+            use_pre_deletion_blend=args.use_pre_deletion_blend,
         )
         # Load pretrained BERT weights; the delete gate is absent from the checkpoint
         # so it gets randomly initialised by _init_delete_gates() (bias=10, weight_std=0.001).

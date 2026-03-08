@@ -29,7 +29,9 @@
 | R  | BERT   | IMDB    | —        | baseline                    | mrbert-imdb   | bert-imdb-baseline      | 1    |
 | S  | MrBERT | IMDB    | 30%      | main result                 | mrbert-imdb   | mrbert-imdb-30pct       | 1    |
 | T  | BERT   | TyDi QA | —        | baseline                    | mrbert-tydiqa | bert-tydiqa-baseline    | 1    |
-| U  | MrBERT | TyDi QA | 30%      | main result                 | mrbert-tydiqa | mrbert-tydiqa-30pct     | 1    |
+| U  | MrBERT | TyDi QA | 30%      | main result (layer 3, no blend) | mrbert-tydiqa | mrbert-tydiqa-30pct     | 1    |
+| U2 | MrBERT | TyDi QA | 30%      | layer 3 + pre-deletion blend    | mrbert-tydiqa | mrbert-tydiqa-30pct-predel | 1 |
+| U3 | MrBERT | TyDi QA | 30%      | layer 9 + pre-deletion blend    | mrbert-tydiqa | mrbert-tydiqa-30pct-layer9-predel | 1 |
 
 **Tier 1** = essential for the advisor meeting.
 **Tier 2** = adds depth for the gate layer ablation chart and PI controller ablation; launch alongside Tier 1 if bandwidth allows.
@@ -87,12 +89,21 @@ For each completed run, open W&B and copy the following values from the **Summar
 | R   | BERT baseline | 0%       | `___`         | 0                     |
 | S   | MrBERT 30%    | 30%      | `___`         | `___`                 |
 
-### TyDi QA Results Table (fill in from W&B)
+### TyDi QA Results Table
 
-| Run | Model         | Del Rate | test/squad_em | test/squad_f1 | seq_len_reduction_pct |
-|-----|---------------|----------|---------------|---------------|-----------------------|
-| T   | BERT baseline | 0%       | `___`         | `___`         | 0                     |
-| U   | MrBERT 30%    | 30%      | `___`         | `___`         | `___`                 |
+> Note: TyDi QA uses extractive QA metrics, not classification accuracy. Standard QA metrics apply.
+> The original 30% run (U) exhibited gate collapse and is superseded by the predel variants.
+
+| Run | Model | Del Rate | Gate Layer | Pre-Del Blend | test/span_em | test/start_acc | test/end_acc | Deletion Rate (actual) | seq_len_reduction_pct |
+|-----|-------|----------|------------|---------------|-------------|---------------|-------------|------------------------|----------------------|
+| T   | BERT baseline | 0% | — | — | ~0.38–0.40 | ~0.45–0.56 | ~0.50 | 0 | 0 |
+| U   | MrBERT 30% | 30% | 3 | No | ~0.10 | ~0.20 | ~0.18 | ~61% (collapsed) | ~61% |
+| U2  | MrBERT 30% + predel | 30% | 3 | Yes | ~0.30 | ~0.40–0.46 | ~0.39–0.46 | ~25% | ~25% |
+| U3  | MrBERT 30% layer9 + predel | 30% | 9 | Yes | ~0.35 | ~0.44–0.49 | ~0.50 | ~22% | ~22% |
+
+**Key finding:** Layer 9 + pre-deletion blend recovers end_acc to match BERT baseline and closes span_em gap from 0.30 (original) to 0.05 vs BERT.
+
+> For full analysis, see `README_tydiqa_predeletion.md` and `README_training_eval_run_analysis.md` §7–9.
 
 > **W&B tip:** In each run's Summary tab, search for `test/` to find all final test metrics. The metrics `seq_len_reduction_pct` and `new_seq_len` are under the eval prefix in the last logged step.
 
@@ -303,10 +314,18 @@ Key talking point: QA requires extracting the exact answer span. The gate must p
 | MRPC     | MrBERT 30%    | accuracy      | `___` | `___`% |
 | IMDB     | BERT baseline | accuracy      | `___` | 0%     |
 | IMDB     | MrBERT 30%    | accuracy      | `___` | `___`% |
-| TyDi QA  | BERT baseline | EM / F1       | `___` | 0%     |
-| TyDi QA  | MrBERT 30%    | EM / F1       | `___` | `___`% |
+| TyDi QA  | BERT baseline | span_em / end_acc | ~0.38 / ~0.50 | 0%  |
+| TyDi QA  | MrBERT 30% (gate collapse, no blend) | span_em | ~0.10 | ~61%  |
+| TyDi QA  | MrBERT 30% layer3 + blend | span_em / end_acc | ~0.30 / ~0.46 | ~25% |
+| TyDi QA  | MrBERT 30% layer9 + blend | span_em / end_acc | ~0.35 / **0.50** | ~22% |
 
-Key talking point: does the accuracy-vs-deletion tradeoff observed on SNLI generalise across tasks and domains?
+Key talking points for TyDi QA:
+- QA is harder than classification for deletion gates: the span head needs every position; deleted answer tokens produce corrupted layer-11 representations
+- Gate collapse (61% vs 30% target) is caused by Gumbel noise + QA task gradient cooperating to lock gate in high-deletion state
+- Advisor's suggestion — pre-deletion blend: substitute deleted tokens' corrupted layer-11 reps with their pre-gate (fully-attended) reps → 3× improvement in span_em (0.10 → 0.30/0.35)
+- Layer 9 gate closes the end_acc gap entirely (matches BERT at 0.50); span_em gap narrows from 0.30 to 0.05
+- Remaining gap attributed to ~22% of tokens still deleted; 10% target run is the logical next step
+- Soft deletion provides no throughput benefit (all MrBERT ~107 samples/s vs BERT ~165); hard deletion required for actual speedup
 
 **6. Ablations (5 min)**
 
@@ -348,3 +367,8 @@ These questions will directly shape the second milestone experiments.
 10. How should we frame the contribution relative to MrT5? Options: (a) direct adaptation of MrT5 to BERT, (b) independent extension showing the mechanism generalizes across architectures, (c) applied study showing practical efficiency gains for discriminative NLU.
 11. What is the target venue? (ACL, EMNLP, NAACL, workshop?) — this affects how thorough the ablations need to be and how many tasks are required.
 12. Is there a specific result threshold that would make this "publishable" — e.g., a minimum runtime speedup % at a maximum accuracy drop %?
+
+### TyDi QA — Follow-up Questions
+13. The pre-deletion blend (using pre-gate representations for deleted tokens) was your suggestion and recovered span_em from 0.10 → 0.35. Is this a publishable architectural contribution in its own right, or is it considered a standard engineering fix?
+14. For QA tasks, is 22% deletion at layer 9 with near-BERT accuracy enough to make a compelling efficiency case, given that soft deletion has no actual throughput benefit? Should we prioritize hard deletion experiments on QA next?
+15. The remaining span_em gap (0.35 vs 0.38 BERT) is likely due to the ~22% deletion rate still occasionally hitting answer spans. Is it more interesting to reduce the target rate (e.g. 10%) to close the gap, or to focus on showing the gate learns linguistically meaningful patterns even at 22%?

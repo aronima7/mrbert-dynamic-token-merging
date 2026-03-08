@@ -12,6 +12,9 @@ A step-by-step guide for launching training, interpreting W&B metrics, diagnosin
 4. [Step-by-Step Analysis Workflow](#4-step-by-step-analysis-workflow)
 5. [Parameter Adjustments by Symptom](#5-parameter-adjustments-by-symptom)
 6. [Success Criteria](#6-success-criteria)
+7. [TyDi QA — Task-Specific Considerations](#7-tydi-qa--task-specific-considerations)
+8. [Pre-Deletion Blend — What It Is and Why It Matters](#8-pre-deletion-blend--what-it-is-and-why-it-matters)
+9. [TyDi QA Results and Analysis](#9-tydi-qa-results-and-analysis)
 
 ---
 
@@ -240,85 +243,231 @@ Stop the run and adjust parameters if by the end of epoch 1 (~17,168 steps):
 - `percent_non_pad_deleted_tokens` > 70% consistently (gate has collapsed)
 - `delete_gate_std` < 0.1 (gate not discriminating)
 - `new_seq_len` < 5 tokens (almost all content deleted)
--------------
-❯ what would be the parameters to tweak to get 0% mrbert to be the same as bert baseline without bypassing the gate?                                                                                       
-                                                                                                                     
-⏺ The root problem is the gate initialization, not the training hyperparameters. Understanding this makes the levers clear:                                                                                
-                                                                                                                                                                                                         
-  What's happening:                                                                                                                                                                                        
-  bias_init = +10  →  sigmoid(10) ≈ 1.0  →  attention_bias ≈ -30  (max deletion from step 0)
-  The gate starts maximally deleting and has to learn its way back to neutral. With deletion_loss_weight=0.1, the pink run moved 85% → 65% over 600 steps — about 20% reduction. To reach 0% needs ~4× more
-   signal.        
 
-  Parameters to tweak:
+---
 
-  ┌────────────────────────┬─────────────────────┬───────────────┬────────────────────────────────────────────────────────────────────────────────┐
-  │       Parameter        │ Current (0_1wt run) │  Recommended  │                                      Why                                       │
-  ├────────────────────────┼─────────────────────┼───────────────┼────────────────────────────────────────────────────────────────────────────────┤
-  │ --deletion-loss-weight │ 0.1                 │ 1.0 – 2.0     │ 10–20× stronger push toward 0% deletion                                        │
-  ├────────────────────────┼─────────────────────┼───────────────┼────────────────────────────────────────────────────────────────────────────────┤
-  │ --regularizer-delay    │ 100                 │ 0             │ Don't waste steps — gate correction needs to start immediately                 │
-  ├────────────────────────┼─────────────────────┼───────────────┼────────────────────────────────────────────────────────────────────────────────┤
-  │ --no-use-pi-controller │ off                 │ add this flag │ PI controller adapts α based on error; with fixed high α it's more predictable │
-  └────────────────────────┴─────────────────────┴───────────────┴────────────────────────────────────────────────────────────────────────────────┘
+## 7. TyDi QA — Task-Specific Considerations
 
-  modal run --detach train_modal.py::main \
-    --model-type MrBERT \
-    --task question_answering \
-    --dataset-name local_tydiqa \
-    --num-epochs 3 --max-steps -1 --batch-size 16 \
-    --target-deletion-rate 0.0 \
-    --deletion-loss-weight 1.0 \
-    --regularizer-delay 0 \
-    --no-use-pi-controller \
-    --mode training-and-eval \
-    --wandb-project mrbert-tydiqa \
-    --wandb-run-name mrbert-tydiqa-0pct-1wt
+### Dataset stats
 
-  The honest caveat: there's a fundamental tension — a deletion_loss_weight high enough to overcome the bias=10 initialization in only 600 steps may dominate the task loss early in training, hurting QA
-  learning. The gate is fighting against its initialization while simultaneously trying to learn span prediction. You'd need to watch train/cross_entropy_loss vs train/delete_gate_loss to check they're
-  balanced.
+| Property | Value |
+|---|---|
+| Training examples (English GoldP) | ~3,200 |
+| Max sequence length | 384 tokens |
+| Batch size | 16 |
+| Steps per epoch | ~200 |
+| Total steps (3 epochs) | ~600 |
 
-  The clean fix is a one-line code change in _init_delete_gates() — change bias=10 to bias=-10 when target_deletion_rate=0. That makes sigmoid(-10) ≈ 0 → attention_bias ≈ 0 from step 0, so even a small
-  deletion loss weight keeps the gate neutral with no initialization fight. Want me to add a gate_init_bias config parameter for this?
+TyDi QA GoldP passages are pre-cropped to answer-containing windows, so the sliding window rarely fires (~1.02× expansion ratio vs ~1.22× for SQuAD). This is why the run completes in ~600 steps rather than the ~850 initially expected.
 
-⏺ Do not change the bias. My suggestion was based on a sign error. The math shows the current initialization is already correct:                                                                           
-                                                                                                                                                                                                           
-  ScaledSigmoid(x) = -30 × sigmoid(-x)                                                                                                                                                                     
-                                                                                                                                                                                                           
-  bias = +10  →  logit ≈ +10  →  -30 × sigmoid(-10) ≈ -30 × 0.00005 ≈  0.0   → KEEP  ✓                                                                                                                     
-  bias = -10  →  logit ≈ -10  →  -30 × sigmoid(+10) ≈ -30 × 0.9999  ≈ -30.0  → DELETE ✗                                                                                                                    
-                                                                                                                                                                                                         
-  bias=+10 already starts the gate at near-zero attention bias (keep all tokens). Changing to -10 would do the opposite — start at maximum deletion. It would make the 0% run worse, not better.
+### Why QA is harder than classification for deletion gates
 
-  ---
-  What's actually causing the collapse
+For classification tasks (SNLI, SST-2, MRPC, IMDB), the task head reads only the `[CLS]` token:
 
-  The gate initializes correctly at ≈0, but collapses to 85% deletion within the first 50 steps due to two forces:
+```python
+pooled_output = self.pooler(sequence_output[:, 0, :])  # position 0 only
+```
 
-  1. Gumbel noise (use_gumbel_noise=True is hardcoded in train_mrbert.py:703).
-  Gumbel distribution has a heavy left tail — occasional large negative samples push logit below 0, which causes a large spike in gate value (toward -30). At logit=-5, the sigmoid gradient is large, so
-  the task loss gradient locks the gate there permanently.
+`[CLS]` is hardcoded to never be deleted, so the gate cannot hurt classification performance regardless of how aggressively it deletes the rest of the sequence.
 
-  2. QA task loss gradient pushes the gate to delete tokens.
-  Suppressing most context tokens makes the softmax over 384 positions sharper/lower-variance in early training. The model "learns" to collapse attention — a local minimum that looks good short-term but
-  destroys performance.
+For extractive QA, the task head scores **every token position** to find the answer span:
 
-  Without a deletion loss to oppose these forces, the gate never recovers.
+```python
+logits = self.qa_outputs(sequence_output)   # (batch, seq, 2) — all positions
+start_logits, end_logits = logits.split(1, dim=-1)
+```
 
-  ---
-  Actual fixes without bypass_gate
+When the gate soft-deletes an answer span token at layer 3, that token's final-layer (layer 11) representation is corrupted — it has had 8 layers of near-zero incoming attention and carries almost no useful signal. The span head then reads a corrupted value at the answer position and assigns low logits there, causing span prediction to fail even when the correct answer is present in the passage.
 
-  ┌──────────────────────────────────┬─────────────────────────────────────────────────────────────────────────┐
-  │               Fix                │                                   How                                   │
-  ├──────────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ Disable Gumbel noise             │ Pass use_gumbel_noise=False in config (currently hardcoded to True)     │
-  ├──────────────────────────────────┼─────────────────────────────────────────────────────────────────────────┤
-  │ Strong deletion loss from step 0 │ --deletion-loss-weight 1.0 --regularizer-delay 0 --no-use-pi-controller │
-  └──────────────────────────────────┴─────────────────────────────────────────────────────────────────────────┘
+**Probabilistic exposure at 30% deletion rate:**
+For a 10-token answer span, P(at least one answer token deleted) ≈ 1 − (0.7)^10 ≈ 97%. This means virtually all QA examples in training and evaluation are affected by gate-induced answer corruption when using the default 30% target.
 
-  Disabling Gumbel noise is the more targeted fix — it removes the stochastic kick that starts the collapse. Want me to add use_gumbel_noise as a training arg so it can be controlled from the CLI? Right
-  now it's hardcoded to True regardless of target deletion rate.
+### Gate collapse in QA runs
 
--------------
+The original `mrbert-tydiqa-30pct` run exhibited **gate collapse**: instead of converging to the 30% target, `percent_non_pad_deleted_tokens` jumped to ~61% and stayed there. Two mechanisms cause this:
 
+1. **Gumbel noise** (`use_gumbel_noise=True`): Gumbel distribution has a heavy left tail. Occasional large negative noise samples push gate logits below zero, creating a large gradient that locks the gate into high deletion. At step 50, before the deletion loss activates, the gate can collapse from ~0% to 80%+ deletion.
+
+2. **QA task gradient**: In early training, suppressing most context tokens (attention bias −30) reduces the effective attention pool from 384 positions to ~10, making the softmax sharper. This accidentally lowers cross-entropy loss early on — a local minimum. The model "learns" that deleting most tokens is useful, and the gate gets stuck.
+
+| Run | Expected deletion | Actual deletion | Outcome |
+|---|---|---|---|
+| `mrbert-tydiqa-30pct` (original) | 30% | ~61% | Gate collapsed; EM ≈ 0.10 |
+| `mrbert-tydiqa-30pct-predel` (layer 3 + blend) | 30% | ~25% | Near-target; EM ≈ 0.30 |
+| `mrbert-tydiqa-30pct-layer9-predel` (layer 9 + blend) | 30% | ~22% | Near-target; EM ≈ 0.35 |
+
+### Step-by-step analysis for TyDi QA
+
+Because TyDi QA only has ~600 total steps (3 epochs), the phases are compressed:
+
+**Steps 0–100 (pre-regularizer)**
+
+- `cross_entropy_loss` should drop from ~4.5 toward ~3.0
+- `eval/span_em`, `eval/start_acc`, `eval/end_acc` are logged after each epoch — expect near zero before training properly starts
+- `delete_gate_average` near 0 confirms correct initialization (bias=+10 → gate ≈ 0 → keep all tokens)
+- `new_seq_len` near 384 — no deletion yet
+
+Red flag: `delete_gate_average` at −25 or below within step 50 → gate is already collapsing via Gumbel noise. Stop and rerun with `--no-use-gumbel-noise`.
+
+**Steps 100–300 (PI controller engages)**
+
+- `percent_non_pad_deleted_tokens` should start rising toward the target
+- `delete_gate_std` increasing = healthy (gate learning to discriminate)
+- `delete_gate_loss_coeff` (α) rising from initial value
+
+Red flag: `percent_non_pad_deleted_tokens` shoots to 50%+ within 50 steps of the controller engaging → Reduce `--controller-p` or increase `--regularizer-delay`.
+
+**Steps 300–600 (convergence)**
+
+- `percent_non_pad_deleted_tokens` should stabilize within ±5% of target
+- `eval/span_em` after epoch 3 is the definitive metric — compare against BERT baseline
+- `delete_gate_std` should plateau at 10–13 (healthy) vs staying at 8 (flat/uncalibrated)
+- `test/cross_entropy_loss` ≤ 2.0 with pre-deletion blend; ≥ 2.5 without = failure signal
+
+### QA-specific parameters
+
+| Parameter | Classification default | QA recommended | Reason |
+|---|---|---|---|
+| `--batch-size` | 32 | 16 | 384-token sequences need smaller batch |
+| `--regularizer-delay` | 1000 | 100 | Only ~600 total steps; delay must scale proportionally |
+| `--delete-gate-layer` | 3 | 9 | Later gate sees deeper question-context interaction |
+| `--use-pre-deletion-blend` | True | True | Critical for QA — see Section 8 |
+| `--target-deletion-rate` | 0.3 | 0.3 | Layer 9 + blend makes 30% viable; consider 0.1 for safer operation |
+
+### Success criteria for TyDi QA
+
+| Metric | BERT baseline | Acceptable | Good |
+|---|---|---|---|
+| `test/span_em` | ~0.38–0.40 | ≥ 0.30 | ≥ 0.35 |
+| `test/start_acc` | ~0.50–0.56 | ≥ 0.40 | ≥ 0.46 |
+| `test/end_acc` | ~0.50 | ≥ 0.40 | ≥ 0.48 |
+| `percent_non_pad_deleted_tokens` | — | within ±8% of target | within ±5% of target |
+| `delete_gate_std` | — | > 9 | > 11 |
+| `test/cross_entropy_loss` | ~1.85 | ≤ 2.1 | ≤ 1.95 |
+
+---
+
+## 8. Pre-Deletion Blend — What It Is and Why It Matters
+
+### The problem
+
+When a token is soft-deleted at layer `delete_gate_layer`, it is still physically present in the sequence (soft deletion adds an attention bias of −30, it does not remove the token). Over the remaining `12 - delete_gate_layer` encoder layers, that token receives near-zero incoming attention from the rest of the sequence. Its final-layer (layer 11) representation degrades — it no longer reflects what the token means in context. For a QA head that scores every position, this produces near-zero logits at the answer span location.
+
+### The fix
+
+Before the gate fires, save a copy of the token representations (the last fully-attended state). For any token the gate deletes, substitute this saved representation into the final output going to the task head.
+
+The substitution is a **soft blend** proportional to the gate's deletion strength:
+
+```
+deletion_weight = clamp( -gate_mask / |sigmoid_mask_scale|, 0, 1 )
+output = (1 - deletion_weight) × layer_11_hidden + deletion_weight × pre_deletion_hidden
+```
+
+| Gate value | `deletion_weight` | What the task head sees |
+|---|---|---|
+| 0.0 (kept) | 0.0 | Pure layer-11 representation — deep, rich, fully attended |
+| −30.0 (fully deleted) | 1.0 | Pure pre-deletion representation — last fully-attended state |
+| −15.0 (partially deleted) | 0.5 | Interpolated blend |
+
+This is **structurally identical at training and test time** — no ground truth is needed. The blend weight comes directly from the gate values, which are computed in every forward pass.
+
+### Impact by task type
+
+| Task | Impact | Reason |
+|---|---|---|
+| Sequence classification (SNLI, SST-2, MRPC, IMDB) | None | Head uses only `[CLS]`; `[CLS]` is never deleted → `deletion_weight` always 0 |
+| QA (TyDi QA, SQuAD) | Significant | Head needs all positions; deleted answer tokens get valid representations |
+| Token classification (NER) | Same benefit as QA | Head needs all positions |
+| MLM | Minor | Averaged over many positions; less critical |
+
+### Configuration
+
+Pre-deletion blend is controlled by `MrBertConfig.use_pre_deletion_blend` (default: `True`).
+
+To run **without** blend (ablation):
+```bash
+modal run --detach train_modal.py::main \
+  --task question_answering --dataset-name local_tydiqa \
+  --model-type MrBERT --num-epochs 3 --batch-size 16 \
+  --target-deletion-rate 0.3 --regularizer-delay 100 \
+  --no-use-pre-deletion-blend \
+  --wandb-run-name mrbert-tydiqa-30pct-nopredel --wandb-project mrbert-tydiqa
+```
+
+To run **with** blend (default — no flag needed):
+```bash
+modal run --detach train_modal.py::main \
+  --task question_answering --dataset-name local_tydiqa \
+  --model-type MrBERT --num-epochs 3 --batch-size 16 \
+  --target-deletion-rate 0.3 --regularizer-delay 100 \
+  --wandb-run-name mrbert-tydiqa-30pct-predel --wandb-project mrbert-tydiqa
+```
+
+For a deeper code-level explanation, see `README_tydiqa_predeletion.md`.
+
+---
+
+## 9. TyDi QA Results and Analysis
+
+### Results table
+
+| Run | `test/span_em` | `test/start_acc` | `test/end_acc` | Deletion Rate | CE Loss |
+|---|---|---|---|---|---|
+| BERT baseline | ~0.40 | ~0.45 | ~0.50 | — | ~1.85 |
+| MrBERT 30% layer3 (no blend) | ~0.10 | ~0.33 | ~0.25 | ~61% (collapsed) | ~2.80 |
+| MrBERT 30% layer3 + blend | ~0.30 | ~0.40 | ~0.46 | ~25% | ~1.95 |
+| MrBERT 30% layer9 + blend | ~0.35 | ~0.44 | ~0.50 | ~22% | ~1.90 |
+
+### Key findings
+
+**1. Pre-deletion blend is essential for QA**
+
+Without it, the layer-3 gate collapses (61% deletion) and span_em falls to 0.10 — a 4× gap vs the BERT baseline. Enabling the blend with the same 30% target recovers span_em to 0.30 (layer 3) and 0.35 (layer 9). The cross-entropy loss drops from 2.80 to ~1.95, nearly matching BERT's 1.85.
+
+**2. Later gate layer (9 vs 3) further closes the gap**
+
+Moving the gate to layer 9 gives it 9 full BERT layers of question-context interaction before deciding what to delete. At layer 9, deletion decisions at both train and test time are more informed. Result: span_em improves to 0.35 and end_acc exactly matches BERT (0.50). The residual gap in span_em (~0.05) is largely because ~22% of tokens are still deleted, occasionally including answer spans.
+
+**3. Gate learns proper discrimination only when blend is active**
+
+`train/delete_gate_std` tells the story:
+- No predel (original): std stays flat at ~8 — gate stuck, no meaningful keep/delete distinction
+- Layer 3 + blend: std rises from 8 → 12–13 — bimodal distribution forming (clear keep/delete decisions)
+- Layer 9 + blend: std rises from 8 → 10–11 — similar healthy pattern
+
+The blend provides a richer gradient signal back through deleted token positions, enabling the gate to learn structured deletion rather than collapsing to a uniform high-deletion state.
+
+**4. Actual deletion rate tracks target only with blend**
+
+`test/percent_non_pad_deleted_tokens`:
+- Original 30% (no blend): ~61% — gate collapse, 2× over-target
+- Layer 3 + blend: ~25% — near target, PI controller functioning
+- Layer 9 + blend: ~22% — near target, even more calibrated
+
+**5. Throughput gap remains — soft deletion limitation**
+
+`test/samples_per_second`: BERT ~165 vs all MrBERT variants ~107. Soft deletion adds the attention bias computation overhead without removing any FLOPs from the sequence length. The actual efficiency story requires hard deletion (`--hard-delete-train-prob > 0`) to physically reduce sequence length and reduce matrix multiply costs.
+
+### Remaining gap analysis
+
+The ~0.05 span_em gap between MrBERT layer9+blend (0.35) and BERT (0.40) has a clear cause: at 22% deletion, a 3-token answer span is still deleted in ~50% of examples. Reducing the target deletion rate to 10% would cut this to ~27%, likely closing most of the remaining gap. Future runs to try:
+
+```bash
+# Conservative deletion — close the remaining gap
+modal run --detach train_modal.py::main \
+  --task question_answering --dataset-name local_tydiqa \
+  --model-type MrBERT --num-epochs 3 --batch-size 16 \
+  --delete-gate-layer 9 \
+  --target-deletion-rate 0.1 --regularizer-delay 100 \
+  --wandb-run-name mrbert-tydiqa-10pct-layer9-predel --wandb-project mrbert-tydiqa
+
+# Hard deletion — actually reduce computation
+modal run --detach train_modal.py::main \
+  --task question_answering --dataset-name local_tydiqa \
+  --model-type MrBERT --num-epochs 3 --batch-size 16 \
+  --delete-gate-layer 9 \
+  --target-deletion-rate 0.3 --regularizer-delay 100 \
+  --hard-delete-train-prob 0.5 \
+  --wandb-run-name mrbert-tydiqa-30pct-layer9-predel-hd --wandb-project mrbert-tydiqa
+```                                                                                       

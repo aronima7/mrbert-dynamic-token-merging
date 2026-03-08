@@ -59,6 +59,7 @@ class MrBertBaseModelOutput(BaseModelOutputWithPoolingAndCrossAttentions):
     delete_gate_mask: Optional[torch.FloatTensor] = None
     delete_gate_output: Optional[torch.FloatTensor] = None
     delete_gate_logits: Optional[torch.FloatTensor] = None
+    pre_deletion_hidden: Optional[torch.FloatTensor] = None
 
 
 @dataclass
@@ -672,13 +673,19 @@ class MrBertEncoder(nn.Module):
         delete_gate_output = None
         delete_gate_logits = None
         final_attention_mask = attention_mask
-        
+        pre_deletion_hidden = None  # hidden states saved just before the gate layer fires
+
         for i, layer_module in enumerate(self.layer):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
             
             layer_head_mask = head_mask[i] if head_mask is not None else None
-            
+
+            # Save hidden states just before the gate layer — these are the last
+            # fully-attended representations before any token is deleted.
+            if layer_module.has_delete_gate and not layer_module.bypass_gate and getattr(self.config, "use_pre_deletion_blend", True):
+                pre_deletion_hidden = hidden_states
+
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
                     layer_module.__call__,
@@ -729,6 +736,7 @@ class MrBertEncoder(nn.Module):
             delete_gate_output,
             delete_gate_logits,
             final_attention_mask,
+            pre_deletion_hidden,
         )
 
 
@@ -870,7 +878,7 @@ class MrBertModel(BertPreTrainedModel):
         
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
-        
+
         return MrBertBaseModelOutput(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
@@ -879,7 +887,35 @@ class MrBertModel(BertPreTrainedModel):
             delete_gate_mask=encoder_outputs[3],
             delete_gate_output=encoder_outputs[4],
             delete_gate_logits=encoder_outputs[5],
+            pre_deletion_hidden=encoder_outputs[7],
         )
+
+    @staticmethod
+    def _blend_pre_deletion(
+        sequence_output: torch.Tensor,
+        pre_deletion_hidden: Optional[torch.FloatTensor],
+        delete_gate_mask: Optional[torch.FloatTensor],
+        sigmoid_mask_scale: float,
+    ) -> torch.Tensor:
+        """
+        For deleted tokens, replace their corrupted final-layer representation
+        with the pre-deletion hidden state saved just before the gate fired.
+
+        deletion_weight = clamp(-gate_mask / |sigmoid_mask_scale|, 0, 1)
+          = 0.0  for kept tokens  (gate≈0)    → use final-layer representation
+          = 1.0  for deleted tokens (gate≈-30) → use pre-deletion representation
+          = interpolated for partially-deleted tokens (soft deletion)
+
+        Works at both training and test time — no ground-truth positions required.
+        Has zero effect on sequence classification (CLS is never deleted, weight=0).
+        """
+        if pre_deletion_hidden is None or delete_gate_mask is None:
+            return sequence_output
+        # gate_mask: (batch, seq, 1), range [sigmoid_mask_scale, 0]
+        deletion_weight = torch.clamp(
+            -delete_gate_mask / abs(sigmoid_mask_scale), 0.0, 1.0
+        )  # (batch, seq, 1)
+        return (1.0 - deletion_weight) * sequence_output + deletion_weight * pre_deletion_hidden
 
 
 # =============================================================================
@@ -943,6 +979,11 @@ class MrBertForMaskedLM(BertPreTrainedModel):
         )
         
         sequence_output = outputs.last_hidden_state
+        if getattr(self.config, "use_pre_deletion_blend", True):
+            sequence_output = self.bert._blend_pre_deletion(
+                sequence_output, outputs.pre_deletion_hidden,
+                outputs.delete_gate_mask, self.config.sigmoid_mask_scale,
+            )
         prediction_scores = self.cls(sequence_output)
         
         masked_lm_loss = None
@@ -1128,6 +1169,11 @@ class MrBertForTokenClassification(BertPreTrainedModel):
         )
         
         sequence_output = outputs.last_hidden_state
+        if getattr(self.config, "use_pre_deletion_blend", True):
+            sequence_output = self.bert._blend_pre_deletion(
+                sequence_output, outputs.pre_deletion_hidden,
+                outputs.delete_gate_mask, self.config.sigmoid_mask_scale,
+            )
         sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)
         
@@ -1206,6 +1252,11 @@ class MrBertForQuestionAnswering(BertPreTrainedModel):
         )
         
         sequence_output = outputs.last_hidden_state
+        if getattr(self.config, "use_pre_deletion_blend", True):
+            sequence_output = self.bert._blend_pre_deletion(
+                sequence_output, outputs.pre_deletion_hidden,
+                outputs.delete_gate_mask, self.config.sigmoid_mask_scale,
+            )
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
         start_logits = start_logits.squeeze(-1).contiguous()

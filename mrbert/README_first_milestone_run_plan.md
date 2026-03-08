@@ -149,20 +149,26 @@ modal run --detach train_modal.py::main --model-type BERT --task sequence_classi
 modal run --detach train_modal.py::main --model-type MrBERT --task sequence_classification --dataset-name local_imdb --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 300 --mode training-and-eval --wandb-project mrbert-imdb --wandb-run-name mrbert-imdb-30pct
 ```
 
-### TyDi QA — Tier 1 Core (Runs T, U, W)
+### TyDi QA — Tier 1 Core (Runs T, U, W, X)
 
+# baseline BERT
 ```bash
 modal run --detach train_modal.py::main --model-type BERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --batch-size 16 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name bert-tydiqa-baseline
 ```
 
+# 0 percent target deletion rate, layer 3, 0.1 deletion loss weight
 ```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --target-deletion-rate 0 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 100 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-0pct-0_1wt
-```
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --target-deletion-rate 0 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 100 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-0pct-0_1wt-predel
 
+# with predeletion switched off, layer 9, 30% target deletion rate
 ```bash
-modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --batch-size 16 --regularizer-delay 100 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-30pct
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --batch-size 16 --regularizer-delay 100 --delete-gate-layer 9 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --no-use-pre-deletion-blend --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-30pct-layer9-no-predel 
 ```
-
+# with predeletion (solution to Q&A), layer 3, 30% target deletion rate; note: predeletion on by default
+```bash
+modal run --detach train_modal.py::main --model-type MrBERT --task question_answering --dataset-name local_tydiqa --num-epochs 3 --max-steps -1 --batch-size 16 --regularizer-delay 100 --target-deletion-rate 0.3 --deletion-loss-weight 0.1 --mode training-and-eval --wandb-project mrbert-tydiqa --wandb-run-name mrbert-tydiqa-30pct-predel
+```
+# Note: target deletion rate 30% : layer 9 without pre-deletion + layer 3 with pre-deletion EQUIVALENT results to baseline BERT
 ---
 
 ## Phase 2 — Download Checkpoints (Optional but Recommended)
