@@ -122,6 +122,7 @@ def train(
     use_gumbel_noise: bool = True,
     use_pre_deletion_blend: bool = True,
     extra_args: list[str] | None = None,
+    freeze_embeddings: bool = False,
 ):
     """
     Run train_mrxlmr.py on Modal with GPU.
@@ -149,6 +150,7 @@ def train(
         bypass_gate: Skip the delete gate entirely (0%-deletion control).
         use_gumbel_noise: Add Gumbel noise to gate logits.
         use_pre_deletion_blend: Blend pre-deletion hidden states for deleted tokens.
+        freeze_embeddings: Freeze token embeddings to reduce Adam state and speed up training.
         extra_args: Optional list of extra CLI args.
     """
     os.chdir("/workspace/training")
@@ -221,6 +223,7 @@ def train(
         "--local_snli_dir", "--local_squad_dir",
         "--local_sst2_dir", "--local_mrpc_dir", "--local_imdb_dir", "--local_tydiqa_dir",
         "--local_xnli_dir",
+        "--num_epochs", "--target_deletion_rate", "--controller_p",
     }
     for arg in DEFAULT_ARGS:
         if skip_next:
@@ -258,6 +261,8 @@ def train(
         cmd.append("--no_use_gumbel_noise")
     if not use_pre_deletion_blend:
         cmd.append("--no_use_pre_deletion_blend")
+    if freeze_embeddings:
+        cmd.append("--freeze_embeddings")
     if wandb_run_name:
         cmd.extend(["--wandb_run_name", wandb_run_name])
     if wandb_project:
@@ -302,6 +307,7 @@ def main(
     use_gumbel_noise: bool = True,
     use_pre_deletion_blend: bool = True,
     use_softmax1: bool = True,
+    freeze_embeddings: bool = False,
 ):
     """
     Main entrypoint for: modal run train_modal.py
@@ -340,4 +346,5 @@ def main(
         use_gumbel_noise=use_gumbel_noise,
         use_pre_deletion_blend=use_pre_deletion_blend,
         use_softmax1=use_softmax1,
+        freeze_embeddings=freeze_embeddings,
     )

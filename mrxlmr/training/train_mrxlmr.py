@@ -125,6 +125,10 @@ class MrXLMRTrainingArguments(TrainingArguments):
         default=True,
         metadata={"help": "Blend pre-deletion hidden states into deleted-token representations"},
     )
+    freeze_embeddings: bool = field(
+        default=False,
+        metadata={"help": "Freeze the token embedding layer (reduces Adam state by ~768MB, speeds up training ~2x)"},
+    )
 
     # ---- Dataset ----
     task: str = field(
@@ -1113,6 +1117,10 @@ def main():
     print(f"Creating {args.model_type} model from pretrained '{args.model_name}'...")
     model = create_model(args, tokenizer, num_labels)
     model.to(args.device)
+
+    if args.freeze_embeddings:
+        model.roberta.embeddings.requires_grad_(False)
+        print("Embeddings frozen (excluded from Adam state).")
 
     total_params    = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
