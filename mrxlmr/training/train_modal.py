@@ -39,6 +39,7 @@ DEFAULT_ARGS = [
     "--controller_i", "0.00001",
     "--max_seq_length", "128",
     "--logging_steps", "50",
+    "--eval_steps", "500",
     "--save_steps", "1000",
 ]
 

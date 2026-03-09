@@ -99,3 +99,25 @@ XLM-R
   Note those local files only have 1000 samples (--max_samples 1000) — fine for a smoke test but not for real training. For actual runs you'd want the full dataset, so the modal run --max-steps 1
   approach (which downloads and preprocesses the full SNLI dataset on the A100) is the right path for production.
 -----------
+ Yes, metrics are being published to W&B. Here's what's wired up:                                                                                                                                         
+                            
+  Setup (__post_init__, lines 260–268):                                                                                                                                                                    
+  - report_to = ["wandb"] when disable_wandb=False (the default for Modal runs)                                                                                                                            
+  - os.environ["WANDB_PROJECT"] set to wandb_project (default "mrxlmr")                                                                                                                                    
+  - WANDB_API_KEY injected via the wandb-secret Modal secret                                                                                                                                               
+                  
+  Training metrics (every logging_steps=50, via MrXLMRTrainer.log()):
+  - loss, cross_entropy_loss, delete_gate_loss
+  - accuracy, percent_deleted_tokens, percent_non_pad_deleted_tokens
+  - delete_gate_average, delete_gate_std, delete_gate_max_value, delete_gate_min_value
+  - delete_gate_loss_coeff (the PI controller's current α)
+  - new_seq_len, elapsed_time
+
+  Eval metrics (every eval_steps, now fixed to 500): standard HuggingFace eval logs (eval_loss, eval_accuracy, etc.)
+
+  After training completes (lines 905–920): wandb.config.update() with all hyperparams (model_type, task, delete_gate_layer, target_deletion_rate, etc.)
+
+  Final test metrics (lines 1199–1206): pushed to wandb.run.summary — accuracy, deletion stats, gate averages
+
+  So you should see all of those in your W&B dashboard under project mrxlmr, run name mrxlmr-MrXLMR-local_snli (or whatever wandb_run_name was passed).
+-----------
