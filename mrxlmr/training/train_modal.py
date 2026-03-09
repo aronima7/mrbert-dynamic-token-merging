@@ -168,13 +168,13 @@ def train(
     print("=" * 60)
 
     DATASET_CONFIGS = {
-        "local_snli":   ("/checkpoints/snli_datasets",   "snli-train.json",   "preprocess_snli.py",   []),
-        "local_squad":  ("/checkpoints/squad_datasets",  "squad-train.json",  "preprocess_squad.py",  []),
-        "local_sst2":   ("/checkpoints/sst2_datasets",   "sst2-train.json",   "preprocess_sst2.py",   []),
-        "local_mrpc":   ("/checkpoints/mrpc_datasets",   "mrpc-train.json",   "preprocess_mrpc.py",   []),
-        "local_imdb":   ("/checkpoints/imdb_datasets",   "imdb-train.json",   "preprocess_imdb.py",   []),
-        "local_tydiqa": ("/checkpoints/tydiqa_datasets", "tydiqa-train.json", "preprocess_tydiqa.py", []),
-        "local_xnli":   ("/checkpoints/xnli_datasets",   "xnli-train.json",   "preprocess_xnli.py",   []),
+        "local_snli":   ("/checkpoints/snli_datasets",   "snli-validation.json",   "preprocess_snli.py",   []),
+        "local_squad":  ("/checkpoints/squad_datasets",  "squad-validation.json",  "preprocess_squad.py",  []),
+        "local_sst2":   ("/checkpoints/sst2_datasets",   "sst2-validation.json",   "preprocess_sst2.py",   []),
+        "local_mrpc":   ("/checkpoints/mrpc_datasets",   "mrpc-validation.json",   "preprocess_mrpc.py",   []),
+        "local_imdb":   ("/checkpoints/imdb_datasets",   "imdb-validation.json",   "preprocess_imdb.py",   []),
+        "local_tydiqa": ("/checkpoints/tydiqa_datasets", "tydiqa-validation.json", "preprocess_tydiqa.py", []),
+        "local_xnli":   ("/checkpoints/xnli_datasets",   "xnli-validation.json",   "preprocess_xnli.py",   []),
     }
 
     if dataset_name in DATASET_CONFIGS:
