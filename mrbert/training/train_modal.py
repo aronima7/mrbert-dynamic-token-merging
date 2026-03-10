@@ -570,6 +570,7 @@ def main(
     bypass_gate: bool = False,
     use_gumbel_noise: bool = True,
     use_pre_deletion_blend: bool = True,
+    extra_args: str = "",
 ):
     """
     Entrypoint for `modal run train_modal.py [--task ...] [--dataset-name ...] [--model-type MrBERT|BERT] ...`.
@@ -578,7 +579,11 @@ def main(
                            local_sst2, local_mrpc, local_imdb, local_tydiqa
     --batch-size: use 16 for IMDB (512 tokens) and TyDi QA (384 tokens); 32 for others
     --regularizer-delay: scale to ~5-10% of total training steps per dataset
+    --extra-args: additional CLI arguments to pass to train_mrbert.py (e.g., "--learning_rate 2e-05 --max_seq_length 128")
     """
+    # Parse extra_args string into a list
+    extra_args_list = extra_args.split() if extra_args.strip() else None
+
     train.remote(
         output_dir="/checkpoints",
         model_type=model_type,
@@ -602,4 +607,5 @@ def main(
         bypass_gate=bypass_gate,
         use_gumbel_noise=use_gumbel_noise,
         use_pre_deletion_blend=use_pre_deletion_blend,
+        extra_args=extra_args_list,
     )
