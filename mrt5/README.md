@@ -70,7 +70,6 @@ pip uninstall apex -y # shadow library
 modal setup
 wandb login
 modal secret create wandb-secret WANDB_API_KEY=<WANDB API KEY>
-
 ```
 
 Next, locate the `BASE_PATH` macro in `utils.py`, and redefine it to point
@@ -493,4 +492,3 @@ When training MrT5 from scratch, we encourage enabling an additional *attention 
   3. Use the MrBERT Modal script (train_modal.py at the project root) once the local pipeline is verified
 
   What does the paper report as the target accuracy numbers for vowel_removal? That'll tell you when Phase 1 is done.
-
