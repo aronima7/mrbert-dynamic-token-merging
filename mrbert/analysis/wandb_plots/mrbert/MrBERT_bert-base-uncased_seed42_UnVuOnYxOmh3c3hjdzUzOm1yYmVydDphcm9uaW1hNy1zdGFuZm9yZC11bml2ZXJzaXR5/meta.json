@@ -1,0 +1,154 @@
+{
+  "id": "UnVuOnYxOmh3c3hjdzUzOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5",
+  "name": "MrBERT_bert-base-uncased_seed42",
+  "state": "crashed",
+  "project": "mrbert",
+  "entity": "aronima7-stanford-university",
+  "url": "https://wandb.ai/aronima7-stanford-university/mrbert/runs/UnVuOnYxOmh3c3hjdzUzOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5",
+  "config": {
+    "seed": 42,
+    "task": "sequence_classification",
+    "_wandb": {
+      "e": {
+        "y4ffhmhtzrjvgybn1qfy96exexgqc3m7": {
+          "os": "Linux-4.4.0-x86_64-with-glibc2.31",
+          "gpu": "NVIDIA A100-SXM4-40GB",
+          "args": [
+            "--task",
+            "sequence_classification",
+            "--dataset_name",
+            "local_snli",
+            "--local_snli_dir",
+            "/checkpoints/snli_datasets",
+            "--num_epochs",
+            "3",
+            "--batch_size",
+            "32",
+            "--learning_rate",
+            "2e-5",
+            "--target_deletion_rate",
+            "0.3",
+            "--deletion_loss_weight",
+            "0.01",
+            "--controller_p",
+            "0.01",
+            "--controller_i",
+            "0.00001",
+            "--max_seq_length",
+            "128",
+            "--logging_steps",
+            "50",
+            "--save_steps",
+            "1000",
+            "--regularizer_delay",
+            "1000",
+            "--model_type",
+            "MrBERT",
+            "--output_dir",
+            "/checkpoints",
+            "--max_steps",
+            "-1",
+            "--num_epochs",
+            "3",
+            "--target_deletion_rate",
+            "0.3"
+          ],
+          "disk": {
+            "/": {
+              "used": "3425386496",
+              "total": "549755813888"
+            }
+          },
+          "host": "modal",
+          "root": "/workspace/training",
+          "email": "aronima.dass@outlook.com",
+          "memory": {
+            "total": "1099511627776"
+          },
+          "python": "CPython 3.11.0",
+          "program": "/workspace/training/train_mrbert.py",
+          "codePath": "train_mrbert.py",
+          "writerId": "y4ffhmhtzrjvgybn1qfy96exexgqc3m7",
+          "cpu_count": 17,
+          "gpu_count": 1,
+          "startedAt": "2026-02-28T23:56:35.268927Z",
+          "executable": "/usr/local/bin/python",
+          "gpu_nvidia": [
+            {
+              "name": "NVIDIA A100-SXM4-40GB",
+              "uuid": "GPU-e7f52585-f952-5e6f-6ba1-4a9f5a7b86f3",
+              "cudaCores": 6912,
+              "memoryTotal": "42949672960",
+              "architecture": "Ampere"
+            }
+          ],
+          "cudaVersion": "13.0",
+          "codePathLocal": "train_mrbert.py",
+          "cpu_count_logical": 17
+        }
+      },
+      "m": [],
+      "t": {
+        "1": [
+          1,
+          11,
+          49,
+          51,
+          71
+        ],
+        "2": [
+          1,
+          11,
+          49,
+          51,
+          71
+        ],
+        "3": [
+          13,
+          16,
+          61
+        ],
+        "4": "3.11.0",
+        "5": "0.25.0",
+        "6": "4.57.6",
+        "12": "0.25.0",
+        "13": "linux-x86_64"
+      },
+      "cli_version": "0.25.0",
+      "python_version": "3.11.0"
+    },
+    "max_steps": -1,
+    "batch_size": 32,
+    "model_name": "bert-base-uncased",
+    "model_type": "MrBERT",
+    "controller_i": 1e-05,
+    "controller_p": 0.01,
+    "warmup_steps": 500,
+    "deletion_type": "scaled_sigmoid",
+    "learning_rate": 2e-05,
+    "delete_gate_lr": 0.0001,
+    "delete_gate_layer": 3,
+    "regularizer_delay": 1000,
+    "deletion_threshold": -15,
+    "sigmoid_mask_scale": -30,
+    "deletion_loss_weight": 0.01,
+    "target_deletion_rate": 0.3
+  },
+  "summary": {
+    "accuracy": 0.5681,
+    "cross_entropy_loss": 0.932,
+    "delete_gate_average": -26.1416,
+    "delete_gate_loss": -11.122,
+    "delete_gate_loss_coeff": 0,
+    "delete_gate_max_value": 0,
+    "delete_gate_min_value": -30,
+    "delete_gate_std": 9.1733,
+    "epoch": 1,
+    "learning_rate": 1.911771625754843e-05,
+    "loss": 0.932,
+    "new_seq_len": 16.14,
+    "percent_deleted_tokens": 87.3867,
+    "percent_non_pad_deleted_tokens": 38.2906,
+    "total_loss": 0.932
+  }
+}

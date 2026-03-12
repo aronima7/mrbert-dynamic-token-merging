@@ -1,0 +1,326 @@
+Fetching projects for aronima7-stanford-university...
+Found 10 projects: ['diagnostic_mrt5', 'mrbert', 'mrbert-snli', 'mrbert-squad', 'mrbert-tydiqa', 'mrbert-mrpc', 'mrbert-sst2', 'mrbert-imdb', 'plus-training', 'mrxlmr-snli']
+
+============================================================
+Project: diagnostic_mrt5
+============================================================
+  9 runs
+  Run: MrT5_byt5-small_seed42 (UnVuOnYxOmN3Mjk1Z2R6OmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=failed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: T5_byt5-small_seed42 (UnVuOnYxOmlzeGVmaXhzOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrT5_byt5-small_seed42 (UnVuOnYxOjNhdGcwdjVpOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=failed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrT5_byt5-small_seed42 (UnVuOnYxOjI3dnVua2FvOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: T5_byt5-small_seed42 (UnVuOnYxOjZmYTNscGZzOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrT5_byt5-small_seed42 (UnVuOnYxOmllZTU3OTloOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=failed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: T5_byt5-small_seed42 (UnVuOnYxOmFkZzFvaXZhOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrT5_byt5-small_seed42 (UnVuOnYxOncxaWYzcGtoOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrT5_byt5-small_seed42 (UnVuOnYxOmZwczRqeXFqOmRpYWdub3N0aWNfbXJ0NTphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert
+============================================================
+  28 runs
+  Run: mrbert-imdb (UnVuOnYxOnN6cGtvdmw0Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: bert-mrpc-baseline (UnVuOnYxOmc0dWZjbjB5Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: bert-sst2-baseline (UnVuOnYxOnRmN29yd2trOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-sst2 (UnVuOnYxOmJxeGV0ZWhsOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=killed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-mrpc (UnVuOnYxOmUybXozd3h2Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-eval-test (UnVuOnYxOjY3MXQzMWk5Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-eval-test (UnVuOnYxOnBzcDgyZzVpOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=failed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run12-mrbert-Trainer-FromPretrained-30pct-3epochs (UnVuOnYxOmQ4MTdkaHNhOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run11-bert-Trainer-baseline-3epochs (UnVuOnYxOnNqYWNuOHkxOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run10-mrbert-Trainer-FromPretrained-0pct-3epochs (UnVuOnYxOm1qZGZneDZuOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run9a-mrbert-softmax1-Trainer-30pct-3epochs (UnVuOnYxOmJtcGtxNXo0Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run8a-bert-Trainer-baseline-3epochs (UnVuOnYxOmVvaGozdGkzOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run7a-mrbert-softmax1-Trainer-0pct-3epochs (UnVuOnYxOnN2NDFzZmw1Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run6-mrbert-softmax1-0pct-3epochs (UnVuOnYxOmFzOGFhMHZvOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run5-mrbert-softmax1-no-pi-5ep (UnVuOnYxOjUyeXZubHdnOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run4-mrbert-softmax1-50pct-5epochs (UnVuOnYxOjR0ZW9vcHEzOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run3-mrbert-softmax1-5epochs (UnVuOnYxOmFkaGIxd3g3Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run2-mrbert-5epochs (UnVuOnYxOmtna2swNmJnOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run2-bert-baseline (UnVuOnYxOjdkNmQ1Z2xzOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: run1-mrbert-deletion_rate_30pct (UnVuOnYxOjI1Zjh2azV0Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrBERT_bert-base-uncased_seed42 (UnVuOnYxOmN1cGhlbWJ3Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: BERT_bert-base-uncased_seed42 (UnVuOnYxOjRocGt2c20xOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrBERT_bert-base-uncased_seed42 (UnVuOnYxOmh3c3hjdzUzOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=crashed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrBERT_bert-base-uncased_seed42 (UnVuOnYxOjVmYnNiZjMxOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: BERT_bert-base-uncased_seed42 (UnVuOnYxOjNxOWh1eHV1Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrBERT_bert-base-uncased_seed42 (UnVuOnYxOjNvb2sydXcwOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=failed
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrBERT_bert-base-uncased_seed42 (UnVuOnYxOnZneWZ6cXVqOm1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: MrBERT_bert-base-uncased_seed42 (UnVuOnYxOnh4dmFvamM2Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert-snli
+============================================================
+  11 runs
+  Run: mrbert-snli-layer9 (UnVuOnYxOjA2MW53dGhyOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-layer6 (UnVuOnYxOmFoeWFzMGoyOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-layer1 (UnVuOnYxOjdyMnBwNnoxOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-random30 (UnVuOnYxOngzaHg4ZHUxOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-nopi (UnVuOnYxOjR4MmlrNGZrOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-70pct (UnVuOnYxOjVlcmUxMzlmOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-30pct-hd (UnVuOnYxOnAzeGVoYjRtOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-30pct (UnVuOnYxOnNhazhjbGFkOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-50pct (UnVuOnYxOmdxM3FrYW4xOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: bert-snli-baseline (UnVuOnYxOnZqYXF2NmNkOm1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-snli-0pct (UnVuOnYxOjkybWpoMWt4Om1yYmVydC1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert-squad
+============================================================
+  2 runs
+  Run: bert-squad-baseline (UnVuOnYxOjlscnBsbmlmOm1yYmVydC1zcXVhZDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-squad-30pct (UnVuOnYxOmhhaWJscXkxOm1yYmVydC1zcXVhZDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert-tydiqa
+============================================================
+  11 runs
+  Run: mrbert-tydiqa-0pct-0_1wt-predel (UnVuOnYxOnN6OWltYXdpOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-30pct-layer9-no-predel (UnVuOnYxOmhkZTd1ejF6Om1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-30pct-layer9-predel (UnVuOnYxOjF3d2gzZHp3Om1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-30pct-predel (UnVuOnYxOm9kY20waWdhOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-30pct-layer9 (UnVuOnYxOmppN2VyNTFlOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-1wt-0pct-nogumbel (UnVuOnYxOjkzcmxwb25qOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-bypass (UnVuOnYxOmY3enZoN2UwOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-0pct-0_1wt (UnVuOnYxOmNyMjZtOWhoOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-0pct-0wt (UnVuOnYxOmE5a2oxYWhwOm1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: bert-tydiqa-baseline (UnVuOnYxOnExNWt5Zmt6Om1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-tydiqa-30pct (UnVuOnYxOnNhMXp2NWl1Om1yYmVydC10eWRpcWE6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert-mrpc
+============================================================
+  2 runs
+  Run: bert-mrpc-baseline (UnVuOnYxOmJ6c3kweHZoOm1yYmVydC1tcnBjOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-mrpc-30pct (UnVuOnYxOjNlanVkejQzOm1yYmVydC1tcnBjOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert-sst2
+============================================================
+  2 runs
+  Run: bert-sst2-baseline (UnVuOnYxOmtvMjc5amN5Om1yYmVydC1zc3QyOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-sst2-30pct (UnVuOnYxOmFpamRxYWVzOm1yYmVydC1zc3QyOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrbert-imdb
+============================================================
+  2 runs
+  Run: bert-imdb-baseline (UnVuOnYxOmIxY3ZocHplOm1yYmVydC1pbWRiOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrbert-imdb-30pct (UnVuOnYxOjNpeGdudHBjOm1yYmVydC1pbWRiOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: plus-training
+============================================================
+  1 runs
+  Run: pets-run-2 (UnVuOnYxOnZkNmFiN3MxOnBsdXMtdHJhaW5pbmc6YXJvbmltYTctc3RhbmZvcmQtdW5pdmVyc2l0eQ==) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+============================================================
+Project: mrxlmr-snli
+============================================================
+  4 runs
+  Run: mrxlmr-snli-30pct-layer8-freeze-embeddings (UnVuOnYxOnYzem5udGliOm1yeGxtci1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: xlmr-snli-baseline (UnVuOnYxOm5qdzN3Y2diOm1yeGxtci1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrxlmr-snli-0pct (UnVuOnYxOnFzd2diOGEzOm1yeGxtci1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+  Run: mrxlmr-snli-30pct (UnVuOnYxOmFnZzgwamR3Om1yeGxtci1zbmxpOmFyb25pbWE3LXN0YW5mb3JkLXVuaXZlcnNpdHk=) state=finished
+    history error: 'NoneType' object has no attribute 'get'
+    files error: 'NoneType' object has no attribute 'get'
+
+
+Done! 72 runs across 10 projects.
+Summary CSV: mrbert/analysis/wandb_plots/all_runs_summary.csv
+Plots saved to: mrbert/analysis/wandb_plots/
+', '_step', 'train/epoch', '_runtime', 'eval/runtime']
+    media files downloaded: 3
+
+  Run: bert-mrpc-baseline (g4ufcn0y) — state=crashed
+    history: 82 rows, keys: ['_step', 'train/loss', 'eval/steps_per_second', 'train/accuracy', 'eval/loss', 'eval/runtime', '_timestamp', 'train/global_step']
+    media files downloaded: 3
+
+  Run: mrbert-imdb (szpkovl4) — state=crashed
+    history: 12 rows, keys: ['train/grad_norm', 'train/accuracy', 'train/new_seq_len', 'train/learning_rate', '_runtime', 'train/seq_len_reduction_pct', '_timestamp', 'train/delete_gate_average']
+    media files downloaded: 3
+
+============================================================
+Project: diagnostic_mrt5
+============================================================
+  9 runs
+
+  Run: MrT5_byt5-small_seed42 (fps4jyqj) — state=finished
+    history: 1 rows, keys: ['train/cross_entropy_loss', 'train/prediction_token_accuracy', '_step', 'train/delete_gate_average', 'train/delete_gate_min_value', 'train/prediction_seq_accuracy', 'train/total_loss', 'train/percent_non_pad_deleted_tokens']
+    media files downloaded: 3
+
+  Run: MrT5_byt5-small_seed42 (w1if3pkh) — state=crashed
+    media files downloaded: 1
+
+  Run: T5_byt5-small_seed42 (adg1oiva) — state=crashed
+    media files downloaded: 2
+
+  Run: MrT5_byt5-small_seed42 (iee5799h) — state=failed
+    history: 20 rows, keys: ['train/learning_rate', 'train/percent_non_pad_deleted_tokens', 'train/global_step', 'train/delete_gate_min_value', 'train/new_seq_len', 'train/percent_deleted_tokens', '_timestamp', 'train/epoch']
+    media files downloaded: 3
+
+  Run: T5_byt5-small_seed42 (6fa3lpfs) — state=crashed
+    history: 92 rows, keys: ['_timestamp', '_runtime', 'train/learning_rate', 'eval/loss', 'eval/prediction_token_accuracy', 'train/epoch', 'train/cross_entropy_loss', 'train/global_step']
+    media files downloaded: 2
+
+  Run: MrT5_byt5-small_seed42 (27vunkao) — state=crashed
+    history: 84 rows, keys: ['eval/runtime', 'train/global_step', '_step', 'eval/hard_prediction_seq_accuracy', 'train/prediction_seq_accuracy', 'eval/delete_gate_std', 'eval/percent_non_pad_deleted_tokens', '_runtime']
+    media files downloaded: 2
+
+  Run: MrT5_byt5-small_seed42 (3atg0v5i) — state=failed
+    history: 213 rows, keys: ['train/prediction_seq_accuracy', 'train/delete_gate_loss_coeff', 'eval/delete_gate_max_value', 'eval/hard_cross_entropy_loss', 'eval/soft_prediction_seq_accuracy', '_step', 'eval/samples_per_second', 'eval/delete_gate_min_value']
+    media files downloaded: 3
+
+  Run: T5_byt5-small_seed42 (isxefixs) — state=finished
+    history: 631 rows, keys: ['_timestamp', 'train/epoch', 'eval/loss', 'train/grad_norm', 'train/cross_entropy_loss', 'eval/samples_per_second', '_step', 'train/global_step']
+    media files downloaded: 3
+
+  Run: MrT5_byt5-small_seed42 (cw295gdz) — state=failed
+    history: 215 rows, keys: ['train/delete_gate_max_value', 'train/epoch', 'eval/hard_cross_entropy_loss', 'eval/hard_prediction_token_accuracy', 'train/loss', 'train/delete_gate_std', 'train/delete_gate_loss', 'train/grad_norm']
+    media files downloaded: 3
+
+
+Done. Summary CSV: mrbert/analysis/wandb_plots/all_runs_summary.csv
+Total runs processed: 72

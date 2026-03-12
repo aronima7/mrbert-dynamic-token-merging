@@ -1,0 +1,29 @@
+{
+  "id": "3ook2uw0",
+  "name": "MrBERT_bert-base-uncased_seed42",
+  "state": "failed",
+  "project": "mrbert",
+  "entity": "aronima7-stanford-university",
+  "url": "https://wandb.ai/aronima7-stanford-university/mrbert/runs/3ook2uw0",
+  "config": {
+    "seed": 42,
+    "task": "sequence_classification",
+    "max_steps": 30000,
+    "batch_size": 32,
+    "model_name": "bert-base-uncased",
+    "model_type": "MrBERT",
+    "controller_i": 1e-05,
+    "controller_p": 0.5,
+    "warmup_steps": 500,
+    "deletion_type": "scaled_sigmoid",
+    "learning_rate": 2e-05,
+    "delete_gate_lr": 0.0001,
+    "delete_gate_layer": 3,
+    "regularizer_delay": 1000,
+    "deletion_threshold": -15,
+    "sigmoid_mask_scale": -30,
+    "deletion_loss_weight": 0.01,
+    "target_deletion_rate": 0.3
+  },
+  "summary": {}
+}

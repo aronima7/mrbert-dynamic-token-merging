@@ -1,0 +1,133 @@
+{
+  "id": "UnVuOnYxOnh4dmFvamM2Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5",
+  "name": "MrBERT_bert-base-uncased_seed42",
+  "state": "finished",
+  "project": "mrbert",
+  "entity": "aronima7-stanford-university",
+  "url": "https://wandb.ai/aronima7-stanford-university/mrbert/runs/UnVuOnYxOnh4dmFvamM2Om1yYmVydDphcm9uaW1hNy1zdGFuZm9yZC11bml2ZXJzaXR5",
+  "config": {
+    "seed": 42,
+    "task": "sequence_classification",
+    "_wandb": {
+      "e": {
+        "18j6k0qvfbqygwtyyjt7rjap90g9cb0m": {
+          "os": "macOS-10.16-x86_64-i386-64bit",
+          "git": {
+            "commit": "32cddd5b360cf5f7dd0de4e0a0abb8d28f598058",
+            "remote": "git@github.com:HivaMohammadzadeh1/CS224N-project.git"
+          },
+          "args": [
+            "--model_type",
+            "MrBERT",
+            "--task",
+            "sequence_classification",
+            "--dataset_name",
+            "local_snli",
+            "--local_snli_dir",
+            "./snli_datasets",
+            "--max_steps",
+            "50",
+            "--batch_size",
+            "8",
+            "--logging_steps",
+            "10",
+            "--output_dir",
+            "./mrbert_snli_test"
+          ],
+          "disk": {
+            "/": {
+              "used": "1508739268608",
+              "total": "1995218165760"
+            }
+          },
+          "host": "Aronimas-MacBook-Pro-2.local",
+          "root": "/Users/aronimadass/Desktop/projects/stanford/CS224N-project/mrbert",
+          "apple": {
+            "name": "Unknown",
+            "gpuCores": 32,
+            "memoryGb": 64,
+            "ecpuCores": 2,
+            "pcpuCores": 8,
+            "ramTotalBytes": "68719476736",
+            "swapTotalBytes": "7516192768"
+          },
+          "email": "aronima.dass@outlook.com",
+          "memory": {
+            "total": "68719476736"
+          },
+          "python": "CPython 3.11.13",
+          "program": "/Users/aronimadass/Desktop/projects/stanford/CS224N-project/mrbert/training/train_mrbert.py",
+          "codePath": "mrbert/training/train_mrbert.py",
+          "writerId": "18j6k0qvfbqygwtyyjt7rjap90g9cb0m",
+          "cpu_count": 10,
+          "startedAt": "2026-02-26T16:11:49.230532Z",
+          "executable": "/Users/aronimadass/miniconda3/envs/mrbert/bin/python",
+          "codePathLocal": "training/train_mrbert.py",
+          "cpu_count_logical": 10
+        }
+      },
+      "m": [],
+      "t": {
+        "1": [
+          1,
+          11,
+          49,
+          51,
+          71
+        ],
+        "2": [
+          1,
+          11,
+          49,
+          51,
+          71
+        ],
+        "3": [
+          2,
+          13,
+          16,
+          61
+        ],
+        "4": "3.11.13",
+        "5": "0.25.0",
+        "6": "4.39.1",
+        "12": "0.25.0",
+        "13": "darwin-x86_64"
+      },
+      "cli_version": "0.25.0",
+      "python_version": "3.11.13"
+    },
+    "max_steps": 50,
+    "batch_size": 8,
+    "model_name": "bert-base-uncased",
+    "model_type": "MrBERT",
+    "controller_i": 5e-05,
+    "controller_p": 0.5,
+    "warmup_steps": 500,
+    "deletion_type": "scaled_sigmoid",
+    "learning_rate": 5e-05,
+    "delete_gate_lr": 0.0001,
+    "delete_gate_layer": 3,
+    "regularizer_delay": 0,
+    "deletion_threshold": -15,
+    "sigmoid_mask_scale": -30,
+    "deletion_loss_weight": 0,
+    "target_deletion_rate": 0.4
+  },
+  "summary": {
+    "accuracy": 0.275,
+    "cross_entropy_loss": 1.1474,
+    "delete_gate_average": -23.8479,
+    "delete_gate_loss": -0.0013,
+    "delete_gate_loss_coeff": 0.199969,
+    "delete_gate_max_value": 0,
+    "delete_gate_min_value": -30,
+    "delete_gate_std": 11.9069,
+    "learning_rate": 5e-06,
+    "loss": 1.1471,
+    "new_seq_len": 26.25,
+    "percent_deleted_tokens": 0,
+    "percent_non_pad_deleted_tokens": 0,
+    "total_loss": 1.1471
+  }
+}

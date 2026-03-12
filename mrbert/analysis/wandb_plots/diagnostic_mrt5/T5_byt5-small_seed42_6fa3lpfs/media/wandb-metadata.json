@@ -1,0 +1,53 @@
+{
+  "os":  "Linux-4.4.0-x86_64-with-glibc2.31",
+  "python":  "CPython 3.11.0",
+  "startedAt":  "2026-02-25T18:03:43.821642Z",
+  "args":  [
+    "vowel_removal",
+    "--model_type",
+    "T5",
+    "--max_steps",
+    "30000",
+    "--save_steps",
+    "1000",
+    "--eval_steps",
+    "1000",
+    "--logging_steps",
+    "50",
+    "--delete_gate_loss_coeff",
+    "0.1",
+    "--target_deletion_rate",
+    "0.3"
+  ],
+  "program":  "/workspace/training/train.py",
+  "codePath":  "train.py",
+  "codePathLocal":  "train.py",
+  "email":  "aronima.dass@outlook.com",
+  "root":  "/workspace/training",
+  "host":  "modal",
+  "executable":  "/usr/local/bin/python",
+  "cpu_count":  17,
+  "cpu_count_logical":  17,
+  "gpu":  "Tesla T4",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "549755813888",
+      "used":  "188636303360"
+    }
+  },
+  "memory":  {
+    "total":  "404806692864"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "Tesla T4",
+      "memoryTotal":  "16106127360",
+      "cudaCores":  2560,
+      "architecture":  "Turing",
+      "uuid":  "GPU-bd645c14-89d1-8495-9286-f76bec2c4404"
+    }
+  ],
+  "cudaVersion":  "13.0",
+  "writerId":  "a8mf35lahdvpc033q1lxe2shkdkhnqx4"
+}

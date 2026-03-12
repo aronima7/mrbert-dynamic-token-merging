@@ -1,0 +1,57 @@
+{
+  "os":  "Linux-4.4.0-x86_64-with-glibc2.31",
+  "python":  "CPython 3.11.0",
+  "startedAt":  "2026-02-26T13:10:26.610593Z",
+  "args":  [
+    "vowel_removal",
+    "--model_type",
+    "MrT5",
+    "--max_steps",
+    "30000",
+    "--save_steps",
+    "1000",
+    "--eval_steps",
+    "1000",
+    "--logging_steps",
+    "50",
+    "--delete_gate_loss_coeff",
+    "0.01",
+    "--target_deletion_rate",
+    "0.3",
+    "--controller_i",
+    "0.00001",
+    "--regularizer_delay",
+    "10000"
+  ],
+  "program":  "/workspace/training/train.py",
+  "codePath":  "train.py",
+  "codePathLocal":  "train.py",
+  "email":  "aronima.dass@outlook.com",
+  "root":  "/workspace/training",
+  "host":  "modal",
+  "executable":  "/usr/local/bin/python",
+  "cpu_count":  17,
+  "cpu_count_logical":  17,
+  "gpu":  "NVIDIA A100-SXM4-40GB",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "549755813888",
+      "used":  "1204572160"
+    }
+  },
+  "memory":  {
+    "total":  "1099511627776"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA A100-SXM4-40GB",
+      "memoryTotal":  "42949672960",
+      "cudaCores":  6912,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-7afbaeef-451e-2807-cb00-7ac38f4ee6c3"
+    }
+  ],
+  "cudaVersion":  "13.0",
+  "writerId":  "3e52dog4rblsicjf5sa5e35n6j7su1pu"
+}
