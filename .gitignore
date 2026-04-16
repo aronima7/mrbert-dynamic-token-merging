@@ -1,4 +1,5 @@
 .env
+.DS_Store
 .history/*
 __pycache__/*
 mrbert/mrbert_checkpoints/*
