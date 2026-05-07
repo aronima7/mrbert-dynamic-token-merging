@@ -4,104 +4,255 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MrBERT is a CS224N project that adapts the **delete gate mechanism from MrT5** to the BERT architecture. The core idea: after a specified encoder layer, a learned gate assigns each token a scalar score; low-scoring tokens are masked out of subsequent attention layers (soft deletion) or physically removed (hard deletion), reducing computation while preserving performance.
+CS224N project applying the **delete gate mechanism from MrT5** to multiple architectures. After a specified layer, a learned gate assigns each token a deletion score; low-scoring tokens are soft-deleted (large negative attention bias) or hard-deleted (physically removed), reducing compute while preserving quality.
 
-Reference paper: [MrT5: Dynamic Token Merging for Efficient Byte-level Language Models](https://arxiv.org/pdf/2410.20771) (Kallini et al., 2024)
+**Primary current work:** `mrdiffusion-sedd/` — delete gates on SEDD (Score Entropy Discrete Diffusion).  
+**Foundation work:** Root-level MrBERT (delete gates on BERT, encoder-only).
+
+Reference papers:
+- [MrT5: Dynamic Token Merging](https://arxiv.org/abs/2410.20771) (Kallini et al., 2024) — delete gate design
+- [SEDD: Score Entropy Discrete Diffusion](https://arxiv.org/abs/2310.16834) (Lou et al., 2023) — diffusion base
+
+---
 
 ## Environment Setup
 
 ```bash
+# MrBERT / general
 conda create -n mrbert python=3.11 -y
 conda activate mrbert
 pip install modal torch transformers datasets accelerate tqdm matplotlib "numpy<2"
+
+# MrDiffusion-SEDD (additional)
+pip install einops omegaconf hydra-core wandb
+pip install flash-attn==2.5.8 --no-build-isolation  # requires CUDA 11.8+
 ```
+
+---
 
 ## Commands
 
-### Run tests
+### MrBERT (root-level)
+
 ```bash
+# Tests
 python test_mrbert.py
-
-# Run a single test function
 python -c "from test_mrbert import test_config_creation; test_config_creation()"
-```
 
-### Train
-```bash
-# MLM (default task)
+# Train
 python train_mrbert.py --task mlm --dataset_name wikitext --dataset_config wikitext-2-raw-v1 \
     --output_dir ./mrbert_checkpoints --num_epochs 3 --target_deletion_rate 0.3 --deletion_loss_weight 0.1
+python train_mrbert.py --max_steps 100 --logging_steps 10  # smoke test
 
-# Sequence classification (SST-2)
-python train_mrbert.py --task sequence_classification --dataset_name glue --dataset_config sst2 \
-    --output_dir ./mrbert_sst2 --num_epochs 3
-
-# Token classification (CoNLL-2003 NER)
-python train_mrbert.py --task token_classification --dataset_name conll2003 --output_dir ./mrbert_ner
-
-# Question answering (SQuAD)
-python train_mrbert.py --task question_answering --dataset_name squad --output_dir ./mrbert_squad
-
-# Quick smoke test (100 steps)
-python train_mrbert.py --max_steps 100 --logging_steps 10
-```
-
-### Evaluate
-```bash
+# Evaluate
 python eval_mrbert.py --model_path ./mrbert_checkpoints/final
-python eval_mrbert.py --from_pretrained bert-base-uncased  # fresh model, no training
+python eval_mrbert.py --from_pretrained bert-base-uncased
+
+# Compare vs baseline BERT
+python run_comparison.py --task mlm --train --num_epochs 10
 ```
 
-### Compare MrBERT vs baseline BERT
+### MrDiffusion-SEDD (`mrdiffusion-sedd/`)
+
 ```bash
-python run_comparison.py --task mlm
-python run_comparison.py --task mlm --train --num_epochs 10
-python run_baseline.py --task mlm
+cd mrdiffusion-sedd
+
+# Tests
+python -m pytest tests/test_mrsedd.py -v
+
+# Local training
+python train_mrdiffusion.py --output_dir ./runs/smoke --max_steps 50  # smoke test
+python train_mrdiffusion.py --output_dir ./runs/baseline --max_steps 5000  # baseline (no gate)
+python train_mrdiffusion.py --output_dir ./runs/soft --delete_gate_layer 3 \
+    --deletion_type scaled_sigmoid --deletion_mode soft --gate_sigma_conditioned \
+    --deletion_rate_schedule linear_sigma --r_min 0.1 --r_max 0.5 --deletion_loss_weight 1.0
+
+# Evaluate
+python evaluation/eval_zero_shot.py --model_path ./runs/soft/checkpoints/best
+python evaluation/eval_gate_behavior.py --model_path ./runs/soft/checkpoints/best
+python evaluation/eval_flops.py --model_path ./runs/soft/checkpoints/best
+python evaluation/eval_mauve.py --model_path ./runs/soft/checkpoints/best
 ```
 
 ### Serverless GPU training (Modal)
+
 ```bash
+# MrBERT
 python3 -m modal setup
 modal run train_modal.py                   # quick test (20 steps)
-modal run train_modal.py --max-steps 500   # longer run
-modal volume get mrbert-checkpoints final ./local_mrbert_final  # download checkpoints
+modal run train_modal.py --max-steps 500
+modal volume get mrbert-checkpoints final ./local_mrbert_final
+
+# MrDiffusion-SEDD
+cd mrdiffusion-sedd
+modal run train_modal_mrdiffusion.py                         # smoke test
+modal run train_modal_mrdiffusion.py --run-name baseline     # no gate
+modal run train_modal_mrdiffusion.py --run-name soft-gate    # soft deletion
+modal volume ls mrdiffusion-checkpoints
+modal volume get mrdiffusion-checkpoints <run-name>/checkpoints ./local_run
 ```
+
+### MrDiffusion-BD3LM (`mrdiffusion-bd3lms/`)
+
+```bash
+cd mrdiffusion-bd3lms
+
+# Tests
+python -m pytest tests/test_mrd_bd3lm.py -v
+
+# Training (local / Modal / GCP)
+python train_mrd_bd3lm.py --output_dir ./runs/smoke --max_steps 50
+modal run train_modal_mrd_bd3lm.py --run-name baseline
+python train_gcp_mrd_bd3lm.py --run-name soft-gate
+
+# Evaluate
+python evaluation/eval_zero_shot.py --model_path ./runs/soft/checkpoints/best
+python evaluation/eval_mauve.py --model_path ./runs/soft/checkpoints/best
+python evaluation/eval_flops.py --model_path ./runs/soft/checkpoints/best
+python evaluation/eval_pareto.py --model_path ./runs/soft/checkpoints/best
+```
+
+### MrXLM-R (`mrxlmr/`)
+
+```bash
+cd mrxlmr
+
+# Training
+python train_mrxlmr.py --output_dir ./runs/smoke --max_steps 50
+modal run train_modal.py
+
+# Evaluate
+python eval/eval_mrxlmr.py --model_path ./runs/best
+```
+
+---
 
 ## Architecture
 
-### Core files
-- **`configuration_mrbert.py`** — `MrBertConfig` extends `BertConfig` with delete gate parameters
-- **`modeling_mrbert.py`** — Full MrBERT implementation (1,428 lines); all task heads
-- **`modeling_bert.py`** — Reference BERT implementation used for comparison
+### Directory Structure
 
-### Delete gate mechanism (in `modeling_mrbert.py`)
-After layer `delete_gate_layer` (default: 3), each token's hidden state is passed through `LayerNorm + Linear → scaled sigmoid` to produce a gate value in [0, 1]:
-- **Soft deletion** (default): gate value is added as a large negative bias to attention scores in all subsequent layers — token remains in memory but is ignored
-- **Hard deletion**: tokens where gate < `deletion_threshold` are physically removed from the sequence; [CLS] and [SEP] are protected; pad tokens are always deleted
+| Directory | Role |
+|-----------|------|
+| `mrdiffusion-sedd/` | **Primary**: delete gates on SEDD |
+| `mrdiffusion-bd3lms/` | Delete gates on BD3-LM (alternate diffusion baseline; full eval suite, tests, GCP+Modal training) |
+| `mrxlmr/` | Delete gates on XLM-R (cross-lingual encoder; SNLI evaluation, Modal training) |
+| `mrbert/` | Delete gates on BERT (encoder-only, foundational; extensive checkpoints and analysis) |
+| `mrt5/` | Original MrT5 reference (T5-based); `models/modeling_mrt5.py` is the delete gate reference |
+| `diffusion/Score-Entropy-Discrete-Diffusion/` | Official SEDD base implementation (imported by mrdiffusion-sedd via sys.path) |
+| `util/` | Modal/GCP setup guides |
+| `final-project-report/` | LaTeX/Markdown report with 19 figures |
 
-### Gate variants (`deletion_type` config field)
-| Type | Class | Description |
-|---|---|---|
-| `scaled_sigmoid` | `SigmoidDeleteGate` | Main learnable gate; sigmoid scaled by `sigmoid_mask_scale` (default -30.0) |
-| `log_sigmoid` | `LogSigmoidDeleteGate` | Alternative learnable gate using log sigmoid |
-| `random` | `RandomDeleteGate` | Baseline: delete random tokens at `random_deletion_probability` rate |
-| `fixed` | `FixedDeleteGate` | Baseline: delete a fixed fraction `fixed_deletion_amount` of tokens |
+### MrDiffusion-SEDD Core Files
 
-### Key `MrBertConfig` parameters
-- `delete_gate_layer` (default: 3) — which encoder layer emits the gate
-- `deletion_type` (default: `"scaled_sigmoid"`)
-- `sigmoid_mask_scale` (default: -30.0) — controls strength of the deletion signal
-- `deletion_threshold` (default: 0.5) — threshold for hard deletion
-- `use_gumbel_noise` (default: False) — add Gumbel noise during training for exploration
-- `random_deletion_probability` / `fixed_deletion_amount` — for non-learnable baselines
+| File | Purpose |
+|------|---------|
+| `modeling_mrdiffusion.py` | Delete gate + three-phase forward pass; all gate variants |
+| `configuration_mrdiffusion.py` | `MrDiffusionConfig` dataclass (35+ parameters) |
+| `losses_mrdiffusion.py` | Score entropy loss + sigma-dependent deletion rate loss |
+| `train_mrdiffusion.py` | Local training loop with W&B |
+| `train_modal_mrdiffusion.py` | Modal serverless training (A100) |
+| `evaluation/` | Zero-shot NELBO, gate behavior, FLOPs, MAUVE, Pareto scripts |
 
-### Training details (`train_mrbert.py`)
-- Auxiliary **deletion loss** encourages the gate to hit `--target_deletion_rate` (fraction of tokens to delete)
-- `--deletion_loss_weight` controls the trade-off between task loss and deletion loss
-- `--delete_gate_lr` allows a higher learning rate for gate parameters vs. the base BERT weights
+### Three-Phase Forward Pass
 
-### Task heads
-`MrBertForMaskedLM`, `MrBertForSequenceClassification`, `MrBertForTokenClassification`, `MrBertForQuestionAnswering`, `MrBertForMultipleChoice`, `MrBertForNextSentencePrediction` — all in `modeling_mrbert.py`
+```
+Phase 1 (full L):   Blocks 0 … delete_gate_layer
+   ↓
+Delete Gate:        LayerNorm + Linear + ScaledSigmoid → values in [sigmoid_mask_scale, 0]
+                    Optionally conditioned on noise level σ (gate_sigma_conditioned=True)
+   ↓
+Phase 2 (compressed):
+  Soft deletion:    gate values added as attention bias in subsequent blocks
+  Hard deletion:    tokens < deletion_threshold physically removed; RoPE recomputed
+   ↓
+Restoration at restore_gate_layer (or pre-output if None):
+  Soft: clear gate mask
+  Hard: scatter compressed states back to full L; fill deleted positions with x_pre_gate
+   ↓
+Phase 3 (full L):   Remaining blocks → logits [B, L, vocab_size]
+```
 
-### Reference implementation
-`mrt5/` contains the original MrT5 code (T5-based). Its `models/modeling_mrt5.py` is the primary reference for the delete gate design.
+Output is always full-sequence `[B, L, vocab_size]` — never zero-filled deleted positions.
+
+### Gate Variants (`deletion_type` in config)
+
+| Type | Class | Notes |
+|------|-------|-------|
+| `scaled_sigmoid` | `SigmoidDeleteGate` / `SigmoidDeleteGateWithSigma` | **Recommended**; σ-conditioned version is essential |
+| `log_sigmoid` | `LogSigmoidDeleteGate` / `LogSigmoidDeleteGateWithSigma` | Alternative |
+| `random` | `RandomDeleteGate` | Baseline |
+| `fixed` | `FixedDeleteGate` | Baseline |
+
+### Key MrDiffusionConfig Parameters
+
+**Gate placement:**
+- `delete_gate_layer` (default 3) — which DDiTBlock fires the gate
+- `restore_gate_layer` (default None) — where to restore; None = just before output
+- `gate_sigma_conditioned` (**True recommended**) — gate sees noise level σ
+
+**Deletion schedule** (use instead of fixed `target_deletion_rate`):
+- `deletion_rate_schedule`: `"constant"` | `"linear_sigma"` | `"power_sigma"`
+- `r_min` / `r_max`: deletion rate ramps from r_min (clean, σ≈0) to r_max (noisy, σ≈σ_max)
+- `deletion_rate_alpha`: exponent for `power_sigma` (1.0 = linear)
+
+**Loss weights:**
+- `deletion_loss_weight`: 0.1–5.0 (increase to 1.0+ if gate collapses)
+- `gate_logit_reg_weight`: 0.001 (L2 reg on gate logits; set to 0 if gate collapses)
+
+### MrBERT Core Files (root-level)
+
+- `configuration_mrbert.py` — `MrBertConfig` extends `BertConfig`
+- `modeling_mrbert.py` — Full implementation; all task heads (MLM, classification, NER, QA, NSP)
+- `modeling_bert.py` — Reference BERT for comparison
+
+Delete gate fires after `delete_gate_layer` (default 3). Auxiliary deletion loss pushes the gate toward `--target_deletion_rate`. Use `--delete_gate_lr` for a separate learning rate on gate parameters.
+
+### Import Pattern (sys.path injection)
+
+`mrdiffusion-sedd/` and `mrdiffusion-bd3lms/` import from their respective base implementations via runtime `sys.path` insertion (not installed packages). The modeling files resolve a relative `_SEDD_ROOT` / `_BD3LMS_ROOT` path at import time. This means:
+- The base implementation directories (`diffusion/Score-Entropy-Discrete-Diffusion/`) must exist at the expected relative path
+- Running scripts from a different working directory may break imports
+- Always `cd` into the subdirectory before running its scripts
+
+---
+
+## Dependencies
+
+`requirements.txt` pins `transformers==4.39.1` — the MrBERT/MrT5 code depends on this version's internal BERT/T5 APIs. Upgrading may break `modeling_mrbert.py` and `mrt5/models/modeling_mrt5.py`.
+
+---
+
+## Known Issues
+
+### Gate collapse (deletion_rate → 0)
+
+The gate learns to keep all tokens. Fixes (in order of impact):
+1. Increase `deletion_loss_weight` to 1.0–5.0
+2. Set `gate_logit_reg_weight=0.0`
+3. Add `--use_pi_controller` (PI controller adjusts deletion loss weight automatically)
+4. Add `--stop_gate_grad` (detach gate from score-entropy gradient)
+5. Switch to `deletion_rate_schedule=linear_sigma` with `r_min=0.1, r_max=0.5`
+
+### OOM during perplexity eval (A100-40GB)
+
+Loading GPT-2-Large (3 GB) + MrDiffusion (2.5 GB) causes allocator fragmentation.  
+Fix: set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` before the eval script.
+
+### Hard deletion: RoPE position drift
+
+Hard deletion re-indexes surviving tokens to [0, 1, …, L_kept-1], losing original positions.  
+Fix: `--rope_original_positions` preserves original indices [0, 2, 5, …]; falls back to SDPA in compressed phase.
+
+---
+
+## Root-Level Utility Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `plot_wandb_history.py` | Generates PNG plots from W&B history JSON exports |
+| `download_wandb_plots.py` | Downloads W&B training data via GraphQL API |
+| `launch_hard_deletion_runs.py` | Orchestrates batches of hard deletion training runs |
+| `analyze_deletion_correlation.py` | Per-example deletion rate vs. loss correlation analysis |
+| `deletion_correlation_analysis.py` | Multi-model deletion analysis for SNLI |
+| `run_comparison.py` | MrBERT vs baseline BERT comparison |
+| `run_baseline.py` | Run baseline BERT training for comparison |

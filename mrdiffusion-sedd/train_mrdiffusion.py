@@ -100,6 +100,10 @@ def parse_args():
                    help="Override n_iters from config for quick tests.")
     p.add_argument("--batch_size", type=int, default=None,
                    help="Override batch_size from config.")
+    p.add_argument("--eval_batch_size", type=int, default=None,
+                   help="Override eval.batch_size from config. Default 512 OOMs at seq_len=1024.")
+    p.add_argument("--data_cache_dir", type=str, default=None,
+                   help="Override data.cache_dir. Set to a persistent path to avoid re-downloading datasets.")
     p.add_argument("--logging_steps", type=int, default=50)
     p.add_argument("--eval_steps", type=int, default=100)
     p.add_argument("--save_steps", type=int, default=5000)
@@ -134,6 +138,8 @@ def parse_args():
                    action="store_false",
                    help="Disable sigma conditioning on the gate.")
     p.add_argument("--use_gumbel_noise", action="store_true", default=False)
+    p.add_argument("--stop_gate_grad", action="store_true", default=False,
+                   help="Detach gate output from score-entropy gradient; gate is trained only by gate loss.")
 
     # --- Deletion rate schedule ---
     p.add_argument("--deletion_rate_schedule", default="constant",
@@ -173,6 +179,10 @@ def parse_args():
                    help="Ramp deletion_loss_weight 0→target over this many steps")
     p.add_argument("--freeze_transformer_steps", type=int, default=2_000,
                    help="Freeze transformer (non-gate) params for first N steps")
+    p.add_argument("--rope_original_positions", action="store_true", default=False,
+                   help="Hard deletion: apply RoPE at original token positions rather "
+                        "than re-indexing survivors to [0..L_kept-1]. Requires SDPA "
+                        "fallback for compressed-phase blocks (no FlashAttn).")
     p.add_argument("--gumbel_temp_start", type=float, default=2.0,
                    help="Initial Gumbel-sigmoid temperature (plan: 2.0)")
     p.add_argument("--gumbel_temp_end", type=float, default=0.5,
@@ -219,11 +229,15 @@ def get_logger(work_dir: str) -> logging.Logger:
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def compute_deletion_rate(gate_output, deletion_threshold: float) -> float:
-    """Fraction of tokens with gate_value <= deletion_threshold."""
+def compute_deletion_rate(gate_output, deletion_threshold: float, sigmoid_mask_scale: float = -30.0) -> float:
+    """Fraction of tokens being deleted by the gate (linear proxy, range [0, 1]).
+
+    Uses the same proxy as deletion_rate_loss: gate_output / sigmoid_mask_scale.
+    Maps gate_output=0 (no deletion) → 0 and gate_output=sigmoid_mask_scale → 1.
+    """
     if gate_output is None:
         return 0.0
-    return (gate_output.squeeze(-1) <= deletion_threshold).float().mean().item()
+    return (gate_output / sigmoid_mask_scale).squeeze(-1).mean().item()
 
 
 # ---------------------------------------------------------------------------
@@ -295,13 +309,18 @@ def wandb_finish():
         pass
 
 
-def _make_pi_controller(target_rate: float):
-    """Create an inline PI controller (plan Section 2.5)."""
+def _make_pi_controller(target_rate: float, initial_weight: float = 0.0):
+    """Create an inline PI controller (plan Section 2.5).
+
+    initial_weight: seed p_acc so the first output matches the warmup-end weight,
+    avoiding the cliff where the controller resets to near-zero on handoff.
+    ki=1e-3 (was 1e-5) so the integral accumulates meaningfully within 20k steps.
+    """
     class _PIController:
-        def __init__(self, target_rate, kp=0.5, ki=1e-5, gamma=0.9):
+        def __init__(self, target_rate, kp=0.5, ki=1e-3, gamma=0.9):
             self.target_rate = target_rate
             self.kp = kp; self.ki = ki; self.gamma = gamma
-            self.p_acc = 0.0; self.i_acc = 0.0
+            self.p_acc = initial_weight; self.i_acc = 0.0
         def update(self, actual_rate):
             error = self.target_rate - actual_rate
             self.p_acc = self.gamma * self.p_acc + (1-self.gamma) * self.kp * error
@@ -347,6 +366,10 @@ def train(args):
         cfg.training.n_iters = args.max_steps
     if args.batch_size is not None:
         cfg.training.batch_size = args.batch_size
+    if args.eval_batch_size is not None:
+        cfg.eval.batch_size = args.eval_batch_size
+    if args.data_cache_dir is not None:
+        cfg.data.cache_dir = args.data_cache_dir
     cfg.training.log_freq = args.logging_steps
     cfg.training.eval_freq = args.eval_steps
     cfg.training.snapshot_freq_for_preemption = args.save_steps
@@ -370,6 +393,7 @@ def train(args):
         gate_sigma_conditioned=args.gate_sigma_conditioned,
         deletion_mode=args.deletion_mode,
         use_gumbel_noise=args.use_gumbel_noise,
+        stop_gate_grad=args.stop_gate_grad,
         deletion_rate_schedule=args.deletion_rate_schedule,
         target_deletion_rate=args.target_deletion_rate,
         r_min=args.r_min,
@@ -377,6 +401,7 @@ def train(args):
         deletion_rate_alpha=args.deletion_rate_alpha,
         sigma_max=args.sigma_max,
         deletion_loss_weight=args.deletion_loss_weight,
+        rope_original_positions=args.rope_original_positions,
         random_deletion_probability=args.random_deletion_probability,
         fixed_deletion_amount=args.fixed_deletion_amount,
     )
@@ -471,18 +496,29 @@ def train(args):
                 if "delete_gate" not in name:
                     p.requires_grad_(False)
             logger.info(f"Transformer frozen for first {args.freeze_transformer_steps} steps")
+            # Re-initialize EMA to only shadow currently-trainable params.
+            # EMA.__init__ and update() both filter by requires_grad; if shadow_params
+            # was built before freezing (all params) but update() only sees gate params,
+            # the zip misaligns and causes a shape mismatch.
+            ema = ExponentialMovingAverage(
+                [p for p in score_model.parameters() if p.requires_grad],
+                decay=cfg.training.ema,
+            )
+            state["ema"] = ema
 
     # Data
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-    train_ds, eval_ds = sedd_data.get_dataloaders(cfg)
+    train_ds, eval_ds = sedd_data.get_dataloaders(cfg, distributed=False)
     train_iter = iter(train_ds)
     eval_iter = iter(eval_ds)
 
     # PI controller for deletion rate targeting (plan Section 2.5)
     pi_controller = None
     if args.use_pi_controller and not args.no_delete_gate:
-        from mrbert_pi import PIController  # fallback: define inline
-        pi_controller = _make_pi_controller(mr_config.target_deletion_rate)
+        pi_controller = _make_pi_controller(
+            mr_config.target_deletion_rate,
+            initial_weight=args.deletion_loss_weight,
+        )
 
     # Sampling function for generation evals
     sampling_shape = (min(16, cfg.training.batch_size), cfg.model.length)
@@ -509,6 +545,13 @@ def train(args):
             for p in score_model.parameters():
                 p.requires_grad_(True)
             logger.info(f"Unfreezing transformer at step {step}")
+            # Re-initialize EMA to track all params again now that the full model
+            # is trainable.  The frozen-phase EMA only shadowed gate params, so we
+            # must rebuild shadow_params to cover the newly-unfrozen transformer.
+            ema = ExponentialMovingAverage(
+                score_model.parameters(), decay=cfg.training.ema
+            )
+            state["ema"] = ema
 
         # ── Gate warmup: ramp deletion_loss_weight ─────────────────────────────
         if args.gate_warmup_steps > 0 and step <= args.gate_warmup_steps:
@@ -541,18 +584,77 @@ def train(args):
             # ------ Logging (train loss + deletion rate) ------
             if new_step % cfg.training.log_freq == 0:
                 deletion_rate = 0.0
+                gate_mean = 0.0
+                gate_std = 0.0
+                score_entropy_loss = loss.item()
+                gate_loss_val = 0.0
+                logit_reg_loss = 0.0
+                time_per_forward_ms = 0.0
+                avg_sequence_length = float(cfg.model.length)
+
                 if not args.no_delete_gate:
                     with torch.no_grad():
                         score_model.eval()
                         t_dummy = torch.full((1,), 0.5, device=device)
                         sigma_dummy, _ = noise(t_dummy)
                         perturbed = graph.sample_transition(batch[:1], sigma_dummy[:, None])
+
+                        # Time the forward pass
+                        if device.type == "cuda":
+                            torch.cuda.synchronize()
+                        t0 = torch.cuda.Event(enable_timing=True) if device.type == "cuda" else None
+                        t1 = torch.cuda.Event(enable_timing=True) if device.type == "cuda" else None
+                        import time as _time
+                        if t0 is not None:
+                            t0.record()
+                        else:
+                            _t_start = _time.perf_counter()
+
                         out = score_model(perturbed, sigma_dummy)
+
+                        if t1 is not None:
+                            t1.record()
+                            torch.cuda.synchronize()
+                            time_per_forward_ms = t0.elapsed_time(t1)
+                        else:
+                            time_per_forward_ms = (_time.perf_counter() - _t_start) * 1000.0
+
                         score_model.train()
+
                     if hasattr(out, "delete_gate_output") and out.delete_gate_output is not None:
+                        gate_out = out.delete_gate_output  # [1, L, 1]
                         deletion_rate = compute_deletion_rate(
-                            out.delete_gate_output, mr_config.deletion_threshold
+                            gate_out,
+                            mr_config.deletion_threshold,
+                            mr_config.sigmoid_mask_scale,
                         )
+                        gate_mean = gate_out.mean().item()
+                        gate_std = gate_out.std().item()
+                        avg_sequence_length = cfg.model.length * (1.0 - deletion_rate)
+
+                    # Loss component breakdown (separate score entropy vs gate loss)
+                    components = mr_losses.compute_loss_components(
+                        score_model, batch[:1], noise, graph, mr_config_for_loss
+                    )
+                    score_entropy_loss = components["score_entropy_loss"]
+                    gate_loss_val = components["gate_loss"]
+                    logit_reg_loss = components["logit_reg_loss"]
+
+                # Theoretical attention speedup: compressed-phase blocks see (1-r)²
+                # fraction of attention cost; full-sequence blocks are unchanged.
+                n_blocks = len(score_model.blocks) if hasattr(score_model, "blocks") else 12
+                gate_layer = mr_config.delete_gate_layer if not args.no_delete_gate else 0
+                compressed_blocks = n_blocks - gate_layer - 1
+                kept_ratio = 1.0 - deletion_rate
+                full_cost = n_blocks
+                mr_cost = (gate_layer + 1) + compressed_blocks * (kept_ratio ** 2)
+                speedup_vs_baseline = full_cost / mr_cost if mr_cost > 0 else 1.0
+
+                # PI controller update
+                if (pi_controller is not None
+                        and new_step > args.gate_warmup_steps
+                        and deletion_rate > 0.0):
+                    mr_config_for_loss.deletion_loss_weight = pi_controller.update(deletion_rate)
 
                 # Compute current LR (after warmup schedule)
                 current_lr = optimizer.param_groups[0]["lr"]
@@ -560,16 +662,29 @@ def train(args):
                 logger.info(
                     f"step: {new_step}, train_loss: {loss.item():.5e}"
                     + (f", deletion_rate: {deletion_rate:.3f}" if not args.no_delete_gate else "")
+                    + (f", del_loss_w: {mr_config_for_loss.deletion_loss_weight:.4f}" if pi_controller is not None else "")
                     + f", lr: {current_lr:.2e}"
                 )
-                wandb_log(
-                    {
-                        "train/loss": loss.item(),
+
+                metrics = {
+                    "train/loss": loss.item(),
+                    "train/score_entropy_loss": score_entropy_loss,
+                    "train/learning_rate": current_lr,
+                }
+                if not args.no_delete_gate:
+                    metrics.update({
+                        "train/gate_loss": gate_loss_val,
+                        "train/logit_reg_loss": logit_reg_loss,
                         "train/deletion_rate": deletion_rate,
-                        "train/learning_rate": current_lr,
-                    },
-                    step=new_step,
-                )
+                        "train/gate_mean": gate_mean,
+                        "train/gate_std": gate_std,
+                        "efficiency/time_per_forward_ms": time_per_forward_ms,
+                        "efficiency/avg_sequence_length": avg_sequence_length,
+                        "efficiency/speedup_vs_baseline": speedup_vs_baseline,
+                    })
+                if pi_controller is not None:
+                    metrics["train/deletion_loss_weight"] = mr_config_for_loss.deletion_loss_weight
+                wandb_log(metrics, step=new_step)
 
             # ------ Meta checkpoint ------
             if new_step % cfg.training.snapshot_freq_for_preemption == 0:
@@ -605,6 +720,7 @@ def train(args):
                     ema.copy_to(score_model.parameters())
                     sample = sampling_fn(score_model)
                     ema.restore(score_model.parameters())
+                    score_model.train()  # sampling sets eval(); restore train mode before next step
 
                     sentences = tokenizer.batch_decode(sample)
                     sample_file = os.path.join(this_sample_dir, "samples.txt")
@@ -631,7 +747,7 @@ def train(args):
                     if cfg.eval.perplexity:
                         with torch.no_grad():
                             eval_model = GPT2LMHeadModel.from_pretrained("gpt2-large").to(device).eval()
-                            bs = cfg.eval.perplexity_batch_size
+                            bs = min(cfg.eval.perplexity_batch_size, sample.shape[0])
                             n_batches = sample.shape[0] // bs
                             total_ppl = 0.0
                             for i in range(n_batches):
@@ -646,6 +762,7 @@ def train(args):
                             logger.info(f"Generative perplexity at step {new_step}: {total_ppl:.3f}")
                             wandb_log({"eval/generative_perplexity": total_ppl}, step=new_step)
                             del eval_model
+                            torch.cuda.empty_cache()
 
     # Save final model
     final_path = os.path.join(work_dir, "final")

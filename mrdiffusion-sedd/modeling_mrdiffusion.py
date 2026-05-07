@@ -68,6 +68,10 @@ class MrSEDDOutput:
     # For hard deletion: mapping from compressed → original positions
     keep_indices: Optional[torch.Tensor] = None       # [B, L_kept] original token positions kept
 
+    def exp(self) -> torch.Tensor:
+        """Delegate to logits.exp() so SEDD's score_fn(sampling=True) works unchanged."""
+        return self.logits.exp()
+
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -108,9 +112,11 @@ class SigmoidDeleteGate(nn.Module):
         if self.has_layer_norm:
             self.layer_norm = LayerNorm(hidden_size)
         self.feed_forward = nn.Linear(hidden_size, 1)
-        # Initialise: large positive bias → gate starts near 0 (keep all tokens)
+        # Initialise: positive bias → gate starts near 0 (keep all tokens).
+        # Value 2.0 keeps gate_output ≈ -3.6 (above deletion threshold -15) while
+        # providing ~1000× better gradient flow than bias=10.
         nn.init.normal_(self.feed_forward.weight, mean=0.0, std=0.01)
-        self.feed_forward.bias.data.fill_(10.0)
+        self.feed_forward.bias.data.fill_(2.0)
         self.activation = ScaledSigmoid(mr_config.sigmoid_mask_scale)
         self.use_gumbel_noise = mr_config.use_gumbel_noise
 
@@ -143,7 +149,7 @@ class SigmoidDeleteGateWithSigma(nn.Module):
             self.layer_norm = LayerNorm(hidden_size)
         self.feed_forward = nn.Linear(hidden_size + cond_dim, 1)
         nn.init.normal_(self.feed_forward.weight, mean=0.0, std=0.01)
-        self.feed_forward.bias.data.fill_(10.0)
+        self.feed_forward.bias.data.fill_(2.0)
         self.activation = ScaledSigmoid(mr_config.sigmoid_mask_scale)
         self.use_gumbel_noise = mr_config.use_gumbel_noise
 
@@ -465,6 +471,41 @@ class MrDDiTBlock(nn.Module):
         x_attn = x_attn.permute(0, 2, 1, 3).contiguous().view(B, L, D)
         return x_attn
 
+    def _attn_with_positional_rotary(
+        self,
+        x: torch.Tensor,
+        positional_rotary_cos_sin: Tuple[torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        """SDPA attention path with per-batch per-position RoPE.
+
+        Used during the compressed phase of hard deletion when
+        rope_original_positions=True.  FlashAttention's rotary apply only supports
+        a single shared position sequence across the batch; after hard deletion each
+        batch item keeps different original positions, so we fall back to
+        _apply_rotary_pos_emb_torchscript (which handles per-batch cos/sin) + SDPA.
+
+        positional_rotary_cos_sin: (cos, sin) each [B, L_kept, 3, 1, D_rot]
+        """
+        B, L, D = x.shape
+        qkv = self.attn_qkv(x)  # [B, L, 3*D]
+        qkv = rearrange(qkv, "b s (three h d) -> b s three h d", three=3, h=self.n_heads)
+        with torch.cuda.amp.autocast(enabled=False):
+            cos, sin = positional_rotary_cos_sin
+            qkv = rotary._apply_rotary_pos_emb_torchscript(
+                qkv, cos.to(qkv.dtype), sin.to(qkv.dtype)
+            )
+        q, k, v = qkv.unbind(dim=2)
+        q = q.permute(0, 2, 1, 3)
+        k = k.permute(0, 2, 1, 3)
+        v = v.permute(0, 2, 1, 3)
+        with torch.cuda.amp.autocast(enabled=False):
+            x_attn = F.scaled_dot_product_attention(
+                q.float(), k.float(), v.float(),
+                dropout_p=self.dropout if self.training else 0.0,
+            ).to(q.dtype)
+        x_attn = x_attn.permute(0, 2, 1, 3).contiguous().view(B, L, D)
+        return x_attn
+
     def _attn_flash(
         self,
         x: torch.Tensor,
@@ -497,6 +538,7 @@ class MrDDiTBlock(nn.Module):
         c: torch.Tensor,
         seqlens: Optional[torch.Tensor] = None,
         delete_gate_mask: Optional[torch.Tensor] = None,
+        positional_rotary_cos_sin: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> torch.Tensor:
         B, L = x.shape[0], x.shape[1]
         bias_dropout_scale_fn = self._get_bias_dropout_scale()
@@ -507,7 +549,9 @@ class MrDDiTBlock(nn.Module):
         x_skip = x
         x_norm = modulate_fused(self.norm1(x), shift_msa, scale_msa)
 
-        if delete_gate_mask is not None:
+        if positional_rotary_cos_sin is not None:
+            x_attn = self._attn_with_positional_rotary(x_norm, positional_rotary_cos_sin)
+        elif delete_gate_mask is not None:
             x_attn = self._attn_with_mask(x_norm, rotary_cos_sin, delete_gate_mask)
         else:
             x_attn = self._attn_flash(x_norm, rotary_cos_sin, seqlens)
@@ -588,14 +632,15 @@ class MrSEDD(nn.Module):
         x: torch.Tensor,
         gate_values: torch.Tensor,
         indices: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Physically remove tokens where gate_value <= deletion_threshold.
 
         Returns:
-            x_kept:    [B, L_kept, hidden_size]
-            keep_mask: [B, L] bool — which original positions survived
-            idx_kept:  [B, L_kept] token ids for surviving positions
+            x_kept:         [B, L_kept, hidden_size]
+            keep_mask:      [B, L] bool — which original positions survived
+            idx_kept:       [B, L_kept] token ids for surviving positions
+            kept_positions: [B, L_kept] original integer positions of survivors
         """
         threshold = self.mr_config.deletion_threshold
         keep_mask = gate_values.squeeze(-1) > threshold  # [B, L] bool
@@ -606,14 +651,16 @@ class MrSEDD(nn.Module):
         B, L, D = x.shape
         x_kept = torch.zeros(B, min_kept, D, device=x.device, dtype=x.dtype)
         idx_kept = torch.zeros(B, min_kept, dtype=indices.dtype, device=x.device)
+        kept_positions = torch.zeros(B, min_kept, dtype=torch.long, device=x.device)
 
         for b in range(B):
             pos = keep_mask[b].nonzero(as_tuple=False).squeeze(1)
             n = min(len(pos), min_kept)
             x_kept[b, :n] = x[b, pos[:n]]
             idx_kept[b, :n] = indices[b, pos[:n]]
+            kept_positions[b, :n] = pos[:n]
 
-        return x_kept, keep_mask, idx_kept
+        return x_kept, keep_mask, idx_kept, kept_positions
 
     def _restore_hidden_states(
         self,
@@ -647,6 +694,31 @@ class MrSEDD(nn.Module):
     def _recompute_rotary(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Recompute RoPE embeddings for the current sequence length."""
         return self.rotary_emb(x)
+
+    def _compute_rotary_for_positions(
+        self, positions: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Compute per-batch RoPE cos/sin for arbitrary (non-contiguous) positions.
+
+        Used after hard deletion when rope_original_positions=True: survivors at
+        original positions [0,2,5,...] get their original encodings rather than
+        being re-indexed to [0,1,2,...].
+
+        FlashAttention's apply_rotary_emb_qkv_ only accepts a single shared
+        position sequence for the whole batch, so the output here must be used
+        with _apply_rotary_pos_emb_torchscript + SDPA (see _attn_with_positional_rotary).
+
+        positions: [B, L_kept]  original integer positions of surviving tokens.
+        Returns:   (cos, sin) each [B, L_kept, 3, 1, D_rot]
+        """
+        inv_freq = self.rotary_emb.inv_freq                          # [D_rot/2]
+        freqs = positions.float().unsqueeze(-1) * inv_freq           # [B, L_kept, D_rot/2]
+        emb = torch.cat([freqs, freqs], dim=-1)                      # [B, L_kept, D_rot]
+        cos = emb.cos().unsqueeze(2).unsqueeze(3).repeat(1, 1, 3, 1, 1)
+        sin = emb.sin().unsqueeze(2).unsqueeze(3).repeat(1, 1, 3, 1, 1)
+        cos[:, :, 2, :, :] = 1.0  # v-component identity
+        sin[:, :, 2, :, :] = 0.0
+        return cos, sin
 
     # ------------------------------------------------------------------
     # Forward
@@ -699,6 +771,7 @@ class MrSEDD(nn.Module):
         gate_logits = None
         keep_mask = None
         x_pre_gate = None
+        positional_rotary_cos_sin = None
         restored = False
 
         restore_at = self.mr_config.restore_gate_layer  # int or None
@@ -711,6 +784,7 @@ class MrSEDD(nn.Module):
                     if self.mr_config.deletion_mode == "hard" and keep_mask is not None:
                         x = self._restore_hidden_states(x, x_pre_gate, keep_mask)
                         rotary_cos_sin = self._recompute_rotary(x)
+                        positional_rotary_cos_sin = None  # phase 3: back to full contiguous sequence
                         indices = original_indices
                         keep_mask = None
                     # Soft: just stop applying the mask; tokens were never removed
@@ -718,7 +792,10 @@ class MrSEDD(nn.Module):
                     restored = True
 
                 # ---- Forward through block ----
-                if delete_gate_mask is not None:
+                if positional_rotary_cos_sin is not None:
+                    x = block(x, rotary_cos_sin, c, seqlens=None,
+                              positional_rotary_cos_sin=positional_rotary_cos_sin)
+                elif delete_gate_mask is not None:
                     x = block(x, rotary_cos_sin, c, seqlens=None,
                               delete_gate_mask=delete_gate_mask)
                 else:
@@ -733,7 +810,11 @@ class MrSEDD(nn.Module):
                     gate_output, gate_logits = self.delete_gate(x, c)
 
                     if self.mr_config.deletion_mode == "soft":
-                        delete_gate_mask = gate_output
+                        # Optionally stop score-entropy gradients from reaching the gate.
+                        # When True, the gate is trained only by the gate loss, not by
+                        # the diffusion objective pushing it toward "keep everything".
+                        mask = gate_output.detach() if getattr(self.mr_config, "stop_gate_grad", False) else gate_output
+                        delete_gate_mask = mask
                     else:  # hard
                         # For BottleneckDeleteGate: gate_output is bias (scale*(1-prob))
                         # Convert to keep_mask: keep if gate > threshold
@@ -742,10 +823,15 @@ class MrSEDD(nn.Module):
                         if isinstance(self.delete_gate, BottleneckDeleteGate):
                             gate_prob = torch.sigmoid(gate_logits)  # [B, L, 1] in [0,1]
                             x = self.pre_blend(x, gate_prob)
-                        x, keep_mask, indices = self._apply_hard_deletion(
+                        x, keep_mask, indices, kept_positions = self._apply_hard_deletion(
                             x, gate_output, indices
                         )
-                        rotary_cos_sin = self._recompute_rotary(x)
+                        if self.mr_config.rope_original_positions:
+                            positional_rotary_cos_sin = self._compute_rotary_for_positions(
+                                kept_positions
+                            )
+                        else:
+                            rotary_cos_sin = self._recompute_rotary(x)
 
             # ---- Restore just before output if restore_gate_layer is None ----
             if not restored:

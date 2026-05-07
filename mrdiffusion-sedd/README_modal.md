@@ -95,7 +95,7 @@ python evaluation/eval_gate_behavior.py \
 
 # FLOPs analysis (analytical only, no checkpoint needed)
 python evaluation/eval_flops.py \
-  --deletion_rate 0.3 --seq_len 128
+  --deletion_rate 0.3 --seq_len 1024
 
 # FLOPs + wall-clock profiling (requires checkpoint)
 python evaluation/eval_flops.py \
@@ -119,9 +119,33 @@ generation/scoring evals, `soft` for gate behavior analysis).
 ```bash
 cd mrdiffusion-sedd
 
-# Smoke test: 50 steps, verifies the container runs
-modal run train_modal_mrdiffusion.py::main
+# Smoke test: 200 steps, verifies the container runs and gate is active
+modal run train_modal_mrdiffusion.py::main \
+  --pretrained-from louaaron/sedd-small \
+  --deletion-mode soft \
+  --deletion-type scaled_sigmoid \
+  --delete-gate-layer 3 \
+  --target-deletion-rate 0.3 \
+  --deletion-loss-weight 0.1 \
+  --max-steps 200 \
+  --eval-batch-size 16 \
+  --disable-wandb
 ```
+
+Expect `deletion_rate: ~0.11` at step 50 (gate active from the start) rising toward 0.3 as LR warms up.
+
+---
+
+## Memory constraints on A100-40GB
+
+The SEDD model uses `seq_len=1024`. The default `eval.batch_size=512` from the
+SEDD config causes OOM on A100-40GB. **`--eval-batch-size 16` is required for
+all Modal training runs.**
+
+| Parameter | Value | Notes |
+|---|---|---|
+| `--batch-size` | `32` | Default; fits fine at seq_len=1024 |
+| `--eval-batch-size` | `16` | Required — default 512 OOMs during eval |
 
 ---
 
@@ -130,24 +154,13 @@ modal run train_modal_mrdiffusion.py::main
 Trains vanilla SEDD without any gate. Use as the comparison point for all gate experiments.
 
 ```bash
-# Short baseline — verify loss decreases and W&B is logging (~1 hr, ~$4)
+# Baseline — verify loss decreases and W&B is logging (~1 hr, ~$4)
 modal run --detach train_modal_mrdiffusion.py::main \
   --no-delete-gate \
   --pretrained-from louaaron/sedd-small \
   --max-steps 20000 \
+  --eval-batch-size 16 \
   --wandb-run-name baseline-pretrained-20k
-
-# Longer baseline (~10 hrs, ~$40)
-modal run --detach train_modal_mrdiffusion.py::main \
-  --no-delete-gate \
-  --pretrained-from louaaron/sedd-small \
-  --max-steps 200000 \
-  --wandb-run-name baseline-pretrained-200k
-
-# Baseline from scratch (expensive, ~$150–300, not recommended)
-modal run --detach train_modal_mrdiffusion.py::main \
-  --no-delete-gate \
-  --wandb-run-name baseline-scratch
 ```
 
 ---
@@ -158,6 +171,9 @@ All gate experiments start from `louaaron/sedd-small` pretrained weights so only
 the gate (and optionally the transformer) needs to learn. The pretrained transformer
 blocks are loaded via `--pretrained-from`; the gate starts from random init.
 
+All runs use `--save-steps 1000` so `eval/generative_perplexity` fires at steps
+5k, 10k, 15k, and 20k — without this flag it defaults to 25k and never triggers.
+
 ### Soft deletion (recommended starting point)
 
 Soft deletion applies a large negative attention bias to deleted tokens — tokens
@@ -165,7 +181,6 @@ remain in the sequence but are invisible to subsequent attention layers. Fully
 differentiable; no hard decisions during training.
 
 ```bash
-# Short sanity check: does gate loss decrease? (~1 hr, ~$4)
 modal run --detach train_modal_mrdiffusion.py::main \
   --pretrained-from louaaron/sedd-small \
   --deletion-mode soft \
@@ -173,19 +188,10 @@ modal run --detach train_modal_mrdiffusion.py::main \
   --delete-gate-layer 3 \
   --target-deletion-rate 0.3 \
   --deletion-loss-weight 0.1 \
+  --save-steps 1000 \
   --max-steps 20000 \
+  --eval-batch-size 16 \
   --wandb-run-name soft-gate-layer3-30pct-20k
-
-# Meaningful soft deletion run (~10 hrs, ~$40)
-modal run --detach train_modal_mrdiffusion.py::main \
-  --pretrained-from louaaron/sedd-small \
-  --deletion-mode soft \
-  --deletion-type scaled_sigmoid \
-  --delete-gate-layer 3 \
-  --target-deletion-rate 0.3 \
-  --deletion-loss-weight 0.1 \
-  --max-steps 200000 \
-  --wandb-run-name soft-gate-layer3-30pct-200k
 ```
 
 ### Hard deletion
@@ -195,7 +201,6 @@ sequence. Surviving tokens are processed by compressed-phase blocks, then restor
 to full length before the output layer (via `restore_gate_layer`).
 
 ```bash
-# Hard deletion sanity check (~1 hr, ~$4)
 modal run --detach train_modal_mrdiffusion.py::main \
   --pretrained-from louaaron/sedd-small \
   --deletion-mode hard \
@@ -203,22 +208,44 @@ modal run --detach train_modal_mrdiffusion.py::main \
   --delete-gate-layer 3 \
   --target-deletion-rate 0.3 \
   --deletion-loss-weight 0.1 \
+  --save-steps 1000 \
   --max-steps 20000 \
+  --eval-batch-size 16 \
   --wandb-run-name hard-gate-layer3-30pct-20k
-
-# Hard deletion longer run (~10 hrs, ~$40)
-modal run --detach train_modal_mrdiffusion.py::main \
-  --pretrained-from louaaron/sedd-small \
-  --deletion-mode hard \
-  --deletion-type scaled_sigmoid \
-  --delete-gate-layer 3 \
-  --target-deletion-rate 0.3 \
-  --deletion-loss-weight 0.1 \
-  --max-steps 200000 \
-  --wandb-run-name hard-gate-layer3-30pct-200k
 ```
 
-### Sigma-conditioned gate
+### Hard deletion with position-aware RoPE
+
+By default, after hard deletion the surviving tokens are re-indexed to contiguous
+positions `[0, 1, ..., L_kept-1]` before RoPE is recomputed. This is wrong: a token
+originally at position 5 gets a position-2 encoding if it is the third survivor,
+corrupting relative position information between survivors during the compressed phase.
+
+`--rope-original-positions` fixes this: survivors retain their original position
+encodings (`[0, 2, 5, ...]` etc.) by computing RoPE directly from the kept positions
+rather than re-indexing. Because FlashAttention's rotary apply only accepts a single
+shared position sequence per batch (no per-example positions), the compressed-phase
+blocks automatically fall back to SDPA + per-batch rotary. Phase 1 and phase 3
+(full-sequence) blocks are unaffected and still use FlashAttention.
+
+```bash
+modal run --detach train_modal_mrdiffusion.py::main \
+  --pretrained-from louaaron/sedd-small \
+  --deletion-mode hard \
+  --deletion-type scaled_sigmoid \
+  --delete-gate-layer 3 \
+  --target-deletion-rate 0.3 \
+  --deletion-loss-weight 0.1 \
+  --rope-original-positions \
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name hard-gate-rope-original-pos-20k
+```
+
+Compare against `hard-gate-layer3-30pct-20k` (contiguous re-indexing). If
+`eval/generative_perplexity` improves, position encoding was a meaningful bottleneck
+for hard deletion quality.
 
 The gate receives both the token hidden state and the sigma (noise level) embedding,
 allowing it to learn noise-level-dependent deletion rates (delete more at high σ,
@@ -231,8 +258,10 @@ modal run --detach train_modal_mrdiffusion.py::main \
   --gate-sigma-conditioned \
   --target-deletion-rate 0.3 \
   --deletion-loss-weight 0.1 \
-  --max-steps 200000 \
-  --wandb-run-name soft-gate-sigma-cond-200k
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-sigma-cond-20k
 ```
 
 ### Sigma-dependent deletion rate schedule
@@ -250,8 +279,10 @@ modal run --detach train_modal_mrdiffusion.py::main \
   --r-min 0.05 \
   --r-max 0.5 \
   --deletion-loss-weight 0.1 \
-  --max-steps 200000 \
-  --wandb-run-name soft-gate-linear-schedule-200k
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-linear-schedule-20k
 ```
 
 ### Gate at a later layer
@@ -266,8 +297,10 @@ modal run --detach train_modal_mrdiffusion.py::main \
   --deletion-mode soft \
   --delete-gate-layer 6 \
   --target-deletion-rate 0.3 \
-  --max-steps 200000 \
-  --wandb-run-name soft-gate-layer6-30pct-200k
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-layer6-30pct-20k
 ```
 
 ### Higher deletion rate
@@ -278,9 +311,87 @@ modal run --detach train_modal_mrdiffusion.py::main \
   --deletion-mode soft \
   --target-deletion-rate 0.5 \
   --deletion-loss-weight 0.1 \
-  --max-steps 200000 \
-  --wandb-run-name soft-gate-50pct-200k
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-50pct-20k
 ```
+
+### PI controller for deletion rate tracking
+
+Instead of a fixed `--deletion-loss-weight`, the PI controller dynamically adjusts
+it each logging step to close the gap between actual and target deletion rate.
+It activates only after gate warmup (`--gate-warmup-steps`) so the ramp phase is
+unaffected.
+
+**Hyperparameters** (defined inline in `train_mrdiffusion.py:_make_pi_controller`):
+- `kp=0.5` — proportional gain (exponentially smoothed with `gamma=0.9`)
+- `ki=1e-5` — integral gain (accumulates error each log step, not each train step)
+- Clamped to ≥ 0 to prevent negative loss weights
+
+The live weight is tracked as `train/deletion_loss_weight` in W&B. `--deletion-loss-weight`
+sets the initial value and the warmup ramp target; the PI controller takes over after warmup.
+
+**Local sanity check** (verify `train/deletion_loss_weight` adapts):
+```bash
+python train_mrdiffusion.py \
+  --pretrained_from louaaron/sedd-small \
+  --deletion_mode soft \
+  --deletion_type scaled_sigmoid \
+  --delete_gate_layer 3 \
+  --target_deletion_rate 0.3 \
+  --deletion_loss_weight 0.1 \
+  --gate_warmup_steps 200 \
+  --use_pi_controller \
+  --max_steps 500 --logging_steps 50 \
+  --disable_wandb
+```
+
+**Modal run** (~1 hr, ~$4):
+```bash
+modal run --detach train_modal_mrdiffusion.py::main \
+  --pretrained-from louaaron/sedd-small \
+  --deletion-mode soft \
+  --deletion-type scaled_sigmoid \
+  --delete-gate-layer 3 \
+  --target-deletion-rate 0.3 \
+  --deletion-loss-weight 0.1 \
+  --gate-warmup-steps 2500 \
+  --use-pi-controller \
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-pi-30pct-20k
+```
+
+Compare against `soft-gate-layer3-30pct-20k` (fixed weight) to see whether
+adaptive weighting improves deletion rate stability and `eval/loss`.
+
+### Frozen transformer (gate-only training)
+
+The transformer stays frozen for the entire run (`--freeze-transformer-steps` set above
+`--max-steps`). Only the gate parameters are updated. Tests whether the pretrained
+transformer's representations are already sufficient for the gate to learn useful
+deletions, without requiring the model to co-adapt.
+
+```bash
+modal run --detach train_modal_mrdiffusion.py::main \
+  --pretrained-from louaaron/sedd-small \
+  --deletion-mode soft \
+  --deletion-type scaled_sigmoid \
+  --delete-gate-layer 3 \
+  --target-deletion-rate 0.3 \
+  --deletion-loss-weight 0.1 \
+  --freeze-transformer-steps 999999 \
+  --save-steps 1000 \
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-frozen-transformer-20k
+```
+
+Compare against `soft-gate-layer3-30pct-20k` (joint training). If `eval/loss` and
+`eval/generative_perplexity` are competitive, the gate is exploiting existing structure
+rather than requiring co-adaptation. If quality drops, joint finetuning is load-bearing.
 
 ---
 
@@ -294,8 +405,9 @@ Each run auto-saves a meta-checkpoint every `--save-steps` (default 5000). To re
 modal run --detach train_modal_mrdiffusion.py::main \
   --pretrained-from louaaron/sedd-small \
   --deletion-mode soft \
-  --max-steps 200000 \
-  --wandb-run-name soft-gate-layer3-30pct-200k   # same run name → same output_dir
+  --max-steps 20000 \
+  --eval-batch-size 16 \
+  --wandb-run-name soft-gate-layer3-30pct-20k   # same run name → same output_dir
 ```
 
 ---
@@ -338,18 +450,18 @@ Results are printed to stdout only (no volume write).
 ```bash
 # Default: all five datasets, hard deletion
 modal run train_modal_mrdiffusion.py::eval_zero_shot_main \
-  --run-name soft-gate-layer3-30pct-200k
+  --run-name soft-gate-layer3-30pct-20k
 
 # Specific datasets only
 modal run train_modal_mrdiffusion.py::eval_zero_shot_main \
-  --run-name soft-gate-layer3-30pct-200k \
+  --run-name soft-gate-layer3-30pct-20k \
   --datasets wikitext-2,wikitext-103
 
 # Compare baseline vs gate (run separately, compare stdout)
 modal run train_modal_mrdiffusion.py::eval_zero_shot_main \
-  --run-name baseline-pretrained-200k
+  --run-name baseline-pretrained-20k
 modal run train_modal_mrdiffusion.py::eval_zero_shot_main \
-  --run-name soft-gate-layer3-30pct-200k
+  --run-name soft-gate-layer3-30pct-20k
 ```
 
 ### MAUVE score
@@ -360,16 +472,16 @@ Saves `mauve_result.json` to the volume.
 ```bash
 # Default: 500 generated vs 200 reference, 128 diffusion steps
 modal run train_modal_mrdiffusion.py::eval_mauve_main \
-  --run-name soft-gate-layer3-30pct-200k
+  --run-name soft-gate-layer3-30pct-20k
 
 # More samples for a tighter estimate (~2x longer)
 modal run train_modal_mrdiffusion.py::eval_mauve_main \
-  --run-name soft-gate-layer3-30pct-200k \
+  --run-name soft-gate-layer3-30pct-20k \
   --n-gen 1000 --n-ref 500
 
 # Download result
 modal volume get mrdiffusion-sedd-checkpoints \
-  soft-gate-layer3-30pct-200k/mauve_results/mauve_result.json .
+  soft-gate-layer3-30pct-20k/mauve_results/mauve_result.json .
 ```
 
 ### Gate behavior analysis
@@ -380,16 +492,16 @@ distributions at multiple noise levels. Saves JSON + `.npy` arrays to the volume
 ```bash
 # Default: soft mode, wikitext-2
 modal run train_modal_mrdiffusion.py::eval_gate_behavior_main \
-  --run-name soft-gate-layer3-30pct-200k
+  --run-name soft-gate-layer3-30pct-20k
 
 # Under actual inference conditions (hard mode)
 modal run train_modal_mrdiffusion.py::eval_gate_behavior_main \
-  --run-name soft-gate-layer3-30pct-200k \
+  --run-name soft-gate-layer3-30pct-20k \
   --deletion-mode hard
 
 # Download results
 modal volume get mrdiffusion-sedd-checkpoints \
-  soft-gate-layer3-30pct-200k/gate_analysis .
+  soft-gate-layer3-30pct-20k/gate_analysis .
 ```
 
 ### FLOPs analysis + wall-clock profiling
@@ -400,15 +512,15 @@ forward passes to measure actual speedup.
 ```bash
 # Analytical FLOPs + wall-clock profiling (hard deletion = real speedup)
 modal run train_modal_mrdiffusion.py::eval_flops_main \
-  --run-name soft-gate-layer3-30pct-200k \
+  --run-name soft-gate-layer3-30pct-20k \
   --deletion-rate 0.3
 
 # Compare soft vs hard wall-clock
 modal run train_modal_mrdiffusion.py::eval_flops_main \
-  --run-name soft-gate-layer3-30pct-200k \
+  --run-name soft-gate-layer3-30pct-20k \
   --deletion-mode soft
 modal run train_modal_mrdiffusion.py::eval_flops_main \
-  --run-name soft-gate-layer3-30pct-200k \
+  --run-name soft-gate-layer3-30pct-20k \
   --deletion-mode hard
 ```
 
@@ -420,16 +532,16 @@ for both MrSEDD and baseline. Saves `pareto_results.json` to the volume.
 ```bash
 # MrSEDD vs baseline Pareto curve (main result)
 modal run train_modal_mrdiffusion.py::eval_pareto_main \
-  --mr-run-name soft-gate-layer3-30pct-200k \
-  --baseline-run-name baseline-pretrained-200k
+  --mr-run-name soft-gate-layer3-30pct-20k \
+  --baseline-run-name baseline-pretrained-20k
 
 # MrSEDD only (no baseline)
 modal run train_modal_mrdiffusion.py::eval_pareto_main \
-  --mr-run-name soft-gate-layer3-30pct-200k
+  --mr-run-name soft-gate-layer3-30pct-20k
 
 # Download results
 modal volume get mrdiffusion-sedd-checkpoints \
-  soft-gate-layer3-30pct-200k/pareto_results/pareto_results.json .
+  soft-gate-layer3-30pct-20k/pareto_results/pareto_results.json .
 ```
 
 ---
@@ -438,32 +550,33 @@ modal volume get mrdiffusion-sedd-checkpoints \
 
 | Metric | Logged at | Description |
 |---|---|---|
-| `train/score_entropy_loss` | every 50 steps | Score entropy loss (lower = model scores better) |
-| `train/deletion_loss` | every 50 steps | MSE between actual and target deletion rate |
-| `train/total_loss` | every 50 steps | `score_entropy_loss + deletion_loss_weight * deletion_loss` |
-| `train/deletion_rate` | every 50 steps | Fraction of tokens actually deleted by the gate |
-| `eval/score_entropy_loss` | every 100 steps | Eval score entropy on WikiText-103 |
-| `eval/deletion_rate` | every 100 steps | Gate deletion rate on eval set |
-| `eval/perplexity` | every 50,000 steps | GPT-2-Large perplexity of generated samples (lower = better) |
+| `train/loss` | every 50 steps | Score entropy loss on the training batch |
+| `train/deletion_rate` | every 50 steps | Mean soft-deletion proxy per token: `gate_output / sigmoid_mask_scale` ∈ [0, 1]. 0 = keeping all tokens, 1 = fully deleting all tokens. Target is `--target-deletion-rate` (e.g. 0.3). Logged as 0 for baseline runs. |
+| `train/deletion_loss_weight` | every 50 steps | Current deletion loss weight. Only logged when `--use-pi-controller` is set; otherwise the weight is fixed. Should stabilize near a value that holds `train/deletion_rate` at the target. |
+| `train/learning_rate` | every 50 steps | Current learning rate (warmup + constant) |
+| `eval/loss` | every 100 steps | Score entropy loss on a WikiText-103 eval batch |
+| `eval/generative_perplexity` | every 5,000 steps | GPT-2-Large perplexity of generated samples (lower = better). Requires `--save-steps 1000`; fires at 5k, 10k, 15k, 20k. |
+| `samples` | every 25,000 steps | W&B Table of 8 generated text samples |
+| `model/n_parameters` | step 0 | Total trainable parameter count |
 
 ### What to look for
 
 **Healthy training signals:**
-- `train/score_entropy_loss` decreases steadily (model is learning to score)
-- `train/deletion_rate` converges toward `--target-deletion-rate` within ~5k steps
-- `train/deletion_loss` decreases as the gate learns to hit the target rate
-- `eval/score_entropy_loss` tracks `train/score_entropy_loss` without diverging
+- `train/loss` decreases steadily (model is learning to score)
+- `train/deletion_rate` starts at ~0.12 (gate init bias=2) and converges toward `--target-deletion-rate` within ~5k steps (after LR warmup at step 2500)
+- `eval/loss` tracks `train/loss` without diverging
 
 **Comparing baseline vs. gate:**
-- A well-trained gate should reach similar `eval/score_entropy_loss` as the baseline
+- A well-trained gate should reach similar `eval/loss` as the baseline
   while maintaining the target deletion rate
-- `eval/perplexity` is the main quality metric — gate model should match or approach
-  baseline perplexity at a fraction of the compute per step
+- `eval/generative_perplexity` is the main quality metric — gate model should match
+  or approach baseline perplexity at a fraction of the compute per step
 
 **Warning signs:**
-- `train/deletion_rate` stuck at 0 — gate is not learning to delete; try higher `--deletion-loss-weight`
-- `train/deletion_rate` stuck at 1 — gate is deleting everything; reduce `--deletion-loss-weight` or lower `--target-deletion-rate`
-- `train/score_entropy_loss` diverges vs. baseline — gate is hurting the model; try `--freeze-transformer-steps 2000` to stabilize the gate first
+- `train/deletion_rate` stuck near 0.12 and not rising — gate is not learning to delete; try higher `--deletion-loss-weight` (e.g. 0.5), or enable `--use-pi-controller` to let the weight adapt automatically
+- `train/deletion_rate` at 1.0 — gate is deleting everything; reduce `--deletion-loss-weight` or lower `--target-deletion-rate`
+- `train/loss` diverges vs. baseline — gate is hurting the model; the transformer is frozen for the first 2000 steps by default (`--freeze-transformer-steps`), which should stabilize early training
+- `train/deletion_loss_weight` growing unboundedly (PI controller run) — integral term accumulating without recovery; deletion rate is stuck far from target; check gate init and warmup
 
 ---
 
@@ -471,57 +584,48 @@ modal volume get mrdiffusion-sedd-checkpoints \
 
 | Run | Steps | Time | Cost |
 |---|---|---|---|
-| Smoke test | 50 | ~2 min | <$0.10 |
-| Sanity check | 20,000 | ~1 hr | ~$4 |
-| Meaningful experiment | 200,000 | ~10 hrs | ~$40 |
-| Full continued pretraining | 500,000 | ~25 hrs | ~$100 |
+| Smoke test | 200 | ~2 min | <$0.10 |
+| All experiments | 20,000 | ~1 hr each | ~$4 each |
 
 ---
 
 ## Recommended experiment sequence
 
 ```
-1. baseline-pretrained-20k      — verify W&B is logging, loss decreases
-2. soft-gate-layer3-30pct-20k   — verify gate loss decreases, deletion rate converges
-3. baseline-pretrained-200k  \
-   soft-gate-layer3-30pct-200k  — compare eval perplexity (main result)
-4. soft-gate-sigma-cond-200k    — does sigma conditioning help?
-5. soft-gate-linear-schedule-200k — does noise-adaptive rate schedule help?
+1. baseline-pretrained-20k              — verify W&B is logging, loss decreases
+2. soft-gate-layer3-30pct-20k           — verify gate loss decreases, deletion rate converges
+3. hard-gate-layer3-30pct-20k           — compare soft vs hard deletion
+4. hard-gate-rope-original-pos-20k      — does position-aware RoPE improve hard deletion quality?
+5. soft-gate-sigma-cond-20k             — does sigma conditioning help?
+6. soft-gate-linear-schedule-20k        — does noise-adaptive rate schedule help?
+7. soft-gate-pi-30pct-20k               — does PI-controlled loss weight stabilize deletion rate?
+8. soft-gate-frozen-transformer-20k     — is joint finetuning necessary, or is gate-only training sufficient?
 ```
+
+Runs 1 and 2 can be kicked off in parallel. Runs 3–8 can all run in parallel once
+run 2 confirms the gate is learning.
 
 After training, run the full eval suite on the two main runs:
 
 ```bash
 # Zero-shot perplexity
-modal run train_modal_mrdiffusion.py::eval_zero_shot_main --run-name baseline-pretrained-200k
-modal run train_modal_mrdiffusion.py::eval_zero_shot_main --run-name soft-gate-layer3-30pct-200k
+modal run train_modal_mrdiffusion.py::eval_zero_shot_main --run-name baseline-pretrained-20k
+modal run train_modal_mrdiffusion.py::eval_zero_shot_main --run-name soft-gate-layer3-30pct-20k
 
 # MAUVE
-modal run train_modal_mrdiffusion.py::eval_mauve_main --run-name baseline-pretrained-200k
-modal run train_modal_mrdiffusion.py::eval_mauve_main --run-name soft-gate-layer3-30pct-200k
+modal run train_modal_mrdiffusion.py::eval_mauve_main --run-name baseline-pretrained-20k
+modal run train_modal_mrdiffusion.py::eval_mauve_main --run-name soft-gate-layer3-30pct-20k
 
 # Gate behavior (MrSEDD only)
-modal run train_modal_mrdiffusion.py::eval_gate_behavior_main --run-name soft-gate-layer3-30pct-200k
+modal run train_modal_mrdiffusion.py::eval_gate_behavior_main --run-name soft-gate-layer3-30pct-20k
 
 # Pareto curve
 modal run train_modal_mrdiffusion.py::eval_pareto_main \
-  --mr-run-name soft-gate-layer3-30pct-200k \
-  --baseline-run-name baseline-pretrained-200k
+  --mr-run-name soft-gate-layer3-30pct-20k \
+  --baseline-run-name baseline-pretrained-20k
 
 # FLOPs
-modal run train_modal_mrdiffusion.py::eval_flops_main --run-name soft-gate-layer3-30pct-200k
+modal run train_modal_mrdiffusion.py::eval_flops_main --run-name soft-gate-layer3-30pct-20k
 ```
--------
-Note:
-* All three root causes were specific to the SEDD codebase:                                                                                                                            
-                                                                                                                                                                                                           
-  1. Hydra struct errors (wandb_project, load_dir keys in config.yaml, train.py resume fix)                                                                                                                
-  → mrdiffusion-sedd uses argparse, not Hydra. No config struct, no overrides, no issue.
-                                                                                                                                                                                                           
-  2. OOM fixes (batch_size=8, accum=4, eval_batch_size=16, PYTORCH_CUDA_ALLOC_CONF)
-  → Root cause was seq_len=1024. mrdiffusion-sedd uses seq_len=128 (8× shorter). The worst-case logits tensor is [batch, 128, 50257] ≈ 0.8 GB at batch=32 — fits easily on an A100-40GB. No OOM risk.
-                                                                                                                                                                                                           
-  3. Multi-GPU train_8gpu                                                                                                                                                                                  
-  → mrdiffusion-sedd is a single-GPU research prototype. The delete gate adds complexity that makes multi-GPU less straightforward, and the shorter seq_len means it doesn't need 8 GPUs to fit standard   
-  batch sizes.   
--------
+
+

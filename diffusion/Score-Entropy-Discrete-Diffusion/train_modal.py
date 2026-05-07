@@ -189,6 +189,9 @@ def train(
         f"wandb_project={wandb_project}",
         f"wandb_name={run_name}",
         f"eval.batch_size={eval_batch_size}",
+        # perplexity_batch_size must be <= sampling batch (batch_size // (ngpus * accum))
+        # to avoid ZeroDivisionError in run_train.py:228
+        f"eval.perplexity_batch_size={batch_size // (ngpus * accum)}",
     ]
 
     # uniform graph requires scale_by_sigma=False (not yet configured in defaults)
@@ -325,6 +328,7 @@ def train_8gpu(
         f"wandb_project={wandb_project}",
         f"wandb_name={run_name}",
         f"eval.batch_size={eval_batch_size}",
+        f"eval.perplexity_batch_size={batch_size // (8 * accum)}",
     ]
 
     if graph_type == "uniform":

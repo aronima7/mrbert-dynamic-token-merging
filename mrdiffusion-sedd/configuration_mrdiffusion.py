@@ -111,6 +111,7 @@ class MrDiffusionConfig:
     gate_sigma_conditioned: bool = True
     deletion_mode: str = "soft"
     use_gumbel_noise: bool = False
+    stop_gate_grad: bool = False
 
     # Deletion rate schedule
     deletion_rate_schedule: str = "constant"
@@ -122,6 +123,9 @@ class MrDiffusionConfig:
 
     # Loss weight
     deletion_loss_weight: float = 0.1
+
+    # RoPE position handling for hard deletion
+    rope_original_positions: bool = False
 
     # Baselines
     random_deletion_probability: float = 0.5
@@ -146,6 +150,7 @@ class MrDiffusionConfig:
             "deletion_rate_alpha": self.deletion_rate_alpha,
             "sigma_max": self.sigma_max,
             "deletion_loss_weight": self.deletion_loss_weight,
+            "rope_original_positions": self.rope_original_positions,
             "random_deletion_probability": self.random_deletion_probability,
             "fixed_deletion_amount": self.fixed_deletion_amount,
         }

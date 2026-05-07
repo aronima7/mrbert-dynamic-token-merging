@@ -93,6 +93,15 @@ image = (
             "data",
             "*.pth",
             "*.bin",
+            # unneeded project directories
+            "mrdiffusion-bd3lms",
+            "mrt5",
+            "analysis",
+            "final-project-report",
+            "memory",
+            # unneeded root-level files
+            "*.md",
+            "*.sh",
             # git / IDE
             ".git",
             ".idea",
@@ -120,6 +129,7 @@ def train(
     # Training
     max_steps: int = 50,
     batch_size: int = 32,
+    eval_batch_size: int = 16,
     output_dir: str = "/checkpoints",
     logging_steps: int = 50,
     eval_steps: int = 100,
@@ -153,6 +163,7 @@ def train(
         model_size: "small" (768-dim, 12 blocks) or "medium" (1024-dim, 24 blocks).
         max_steps: Total training steps. Set to -1 to use the default from config.yaml (1.3M).
         batch_size: Per-GPU batch size.
+        eval_batch_size: Eval batch size. Default 512 (from SEDD config) OOMs at seq_len=1024; use 16.
         output_dir: Root dir for checkpoints inside the Modal volume.
         logging_steps: Log train loss every N gradient steps.
         eval_steps: Run eval loss every N gradient steps.
@@ -203,6 +214,8 @@ def train(
         "--model_size", model_size,
         "--output_dir", run_output_dir,
         "--batch_size", str(batch_size),
+        "--eval_batch_size", str(eval_batch_size),
+        "--data_cache_dir", "/checkpoints/data",
         "--logging_steps", str(logging_steps),
         "--eval_steps", str(eval_steps),
         "--save_steps", str(save_steps),
@@ -237,7 +250,11 @@ def train(
         cmd.extend(extra_args)
 
     print("Running:", " ".join(cmd))
-    result = subprocess.run(cmd, env={**os.environ, "PYTHONPATH": "/workspace/mrdiffusion-sedd"})
+    result = subprocess.run(cmd, env={
+        **os.environ,
+        "PYTHONPATH": "/workspace/mrdiffusion-sedd",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    })
 
     # Always commit volume so partial checkpoints are not lost
     volume.commit()
@@ -259,6 +276,8 @@ def main(
     model_size: str = "small",
     max_steps: int = 50,
     batch_size: int = 32,
+    eval_batch_size: int = 16,
+    save_steps: int = 5000,
     no_delete_gate: bool = False,
     delete_gate_layer: int = 3,
     deletion_type: str = "scaled_sigmoid",
@@ -268,16 +287,36 @@ def main(
     deletion_loss_weight: float = 0.1,
     target_deletion_rate: float = 0.3,
     delete_gate_lr: float = 0.0,
+    gate_warmup_steps: int = 0,
+    use_pi_controller: bool = False,
+    gate_logit_reg_weight: float = 0.001,
+    stop_gate_grad: bool = False,
     pretrained_from: str = "",
     wandb_project: str = "mrdiffusion-sedd",
     wandb_run_name: str = "",
     disable_wandb: bool = False,
 ):
     """Local entrypoint: parses CLI flags and invokes the remote train() function."""
+    extra_args: list[str] = []
+    if gate_warmup_steps > 0:
+        extra_args.extend(["--gate_warmup_steps", str(gate_warmup_steps)])
+    if use_pi_controller:
+        extra_args.append("--use_pi_controller")
+    if gate_logit_reg_weight != 0.001:
+        extra_args.extend(["--gate_logit_reg_weight", str(gate_logit_reg_weight)])
+    if stop_gate_grad:
+        extra_args.append("--stop_gate_grad")
+        # With stop_gate_grad the gate never influences score entropy, so freezing
+        # the transformer serves no purpose and breaks GradScaler (param group with
+        # all-None grads causes "No inf checks recorded" assertion).
+        extra_args.extend(["--freeze_transformer_steps", "0"])
+
     train.remote(
         model_size=model_size,
         max_steps=max_steps,
         batch_size=batch_size,
+        eval_batch_size=eval_batch_size,
+        save_steps=save_steps,
         no_delete_gate=no_delete_gate,
         delete_gate_layer=delete_gate_layer,
         deletion_type=deletion_type,
@@ -291,6 +330,7 @@ def main(
         wandb_project=wandb_project,
         wandb_run_name=wandb_run_name,
         disable_wandb=disable_wandb,
+        extra_args=extra_args or None,
     )
 
 
