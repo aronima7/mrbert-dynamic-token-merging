@@ -105,6 +105,7 @@ class MrDiffusionConfig:
     gate_type: str = "scaled_sigmoid"        # "scaled_sigmoid" | "bottleneck_mlp"
     gate_bottleneck_dim: int = 128
     gate_logit_reg_weight: float = 0.001    # L2 reg on gate logits (plan Section 3.4)
+    gate_init_bias: float = 0.0            # gate linear layer bias init (0=balanced start)
     sigmoid_mask_scale: float = -30.0
     deletion_threshold: float = -15.0
     gate_layer_norm: bool = True
@@ -114,7 +115,7 @@ class MrDiffusionConfig:
     stop_gate_grad: bool = False
 
     # Deletion rate schedule
-    deletion_rate_schedule: str = "constant"
+    deletion_rate_schedule: str = "linear_sigma"
     target_deletion_rate: float = 0.3     # used when schedule="constant"
     r_min: float = 0.05                   # rate at σ → 0
     r_max: float = 0.5                    # rate at σ → σ_max
@@ -123,6 +124,8 @@ class MrDiffusionConfig:
 
     # Loss weight
     deletion_loss_weight: float = 0.1
+    gate_bimodality_weight: float = 0.01  # penalizes gate logits in undecided zone [-2, 2]
+    pi_min_weight: float = 0.1            # floor for PI controller deletion_loss_weight
 
     # RoPE position handling for hard deletion
     rope_original_positions: bool = False
@@ -143,6 +146,7 @@ class MrDiffusionConfig:
             "gate_sigma_conditioned": self.gate_sigma_conditioned,
             "deletion_mode": self.deletion_mode,
             "use_gumbel_noise": self.use_gumbel_noise,
+            "gate_init_bias": self.gate_init_bias,
             "deletion_rate_schedule": self.deletion_rate_schedule,
             "target_deletion_rate": self.target_deletion_rate,
             "r_min": self.r_min,
@@ -150,6 +154,8 @@ class MrDiffusionConfig:
             "deletion_rate_alpha": self.deletion_rate_alpha,
             "sigma_max": self.sigma_max,
             "deletion_loss_weight": self.deletion_loss_weight,
+            "gate_bimodality_weight": self.gate_bimodality_weight,
+            "pi_min_weight": self.pi_min_weight,
             "rope_original_positions": self.rope_original_positions,
             "random_deletion_probability": self.random_deletion_probability,
             "fixed_deletion_amount": self.fixed_deletion_amount,

@@ -150,26 +150,43 @@ After DDiTBlock layer `delete_gate_layer` (default: 3), each token's hidden stat
 | `sigmoid_mask_scale` | −30.0 | Controls strength of the deletion signal |
 | `deletion_threshold` | −15.0 | Threshold for hard deletion and deletion rate metrics |
 | `gate_sigma_conditioned` | **True** | Condition gate on σ — essential for noise-level-aware deletion |
+| `gate_init_bias` | 0.0 | Gate linear layer bias init. 0 = balanced start (sigmoid at 0.5) |
+| `stop_gate_grad` | False | Detach gate from score-entropy gradient; gate trained only by gate loss |
 | `use_gumbel_noise` | False | Add Gumbel noise to gate logits during training |
-| `deletion_loss_weight` | 0.1 | Weight of auxiliary deletion rate loss |
-| `deletion_rate_schedule` | `constant` | Schedule for target deletion rate vs σ: `constant`, `linear_sigma`, `power_sigma` |
+| `deletion_loss_weight` | 0.1 | Weight of auxiliary deletion rate loss (use 1.0+ with stop_gate_grad) |
+| `gate_bimodality_weight` | 0.01 | Penalizes gate logits in undecided zone [-2, 2] for clean keep/delete split |
+| `gate_logit_reg_weight` | 0.001 | L2 reg on gate logits (set to 0 if gate collapses) |
+| `deletion_rate_schedule` | `linear_sigma` | Schedule for target deletion rate vs σ: `constant`, `linear_sigma`, `power_sigma` |
 | `target_deletion_rate` | 0.3 | Target rate for `constant` schedule |
 | `r_min` | 0.05 | Minimum deletion rate at σ≈0 (nearly clean tokens) |
 | `r_max` | 0.5 | Maximum deletion rate at σ≈σ\_max (fully noised) |
 | `deletion_rate_alpha` | 1.0 | Exponent for `power_sigma` schedule (1.0 = linear) |
 | `sigma_max` | 20.0 | Must match SEDD `noise.sigma_max` |
+| `pi_min_weight` | 0.1 | Floor for PI controller (prevents deletion_loss_weight → 0) |
 
 ---
 
 ## File Structure
 
 ```
-mrdiffusion/
+mrdiffusion-sedd/
 ├── configuration_mrdiffusion.py   # MrDiffusionConfig dataclass
 ├── modeling_mrdiffusion.py        # MrSEDD model — delete gate classes + MrDDiTBlock
-├── losses_mrdiffusion.py          # Score entropy loss + deletion rate regularisation
+├── losses_mrdiffusion.py          # Score entropy loss + deletion rate + bimodality losses
 ├── train_mrdiffusion.py           # Local training script (argparse, W&B, single GPU)
 ├── train_modal_mrdiffusion.py     # Modal serverless GPU training script
+├── evaluation/
+│   ├── eval_zero_shot.py          # Zero-shot NELBO perplexity
+│   ├── eval_gate_behavior.py      # Gate deletion rate vs sigma, bimodality
+│   ├── eval_flops.py              # Analytical FLOPs + wall-clock profiling
+│   ├── eval_mauve.py              # MAUVE score
+│   └── eval_pareto.py             # Pareto frontier (quality vs efficiency)
+├── analysis/
+│   ├── compute_savings.py         # Theoretical MACs curves (multi-step diffusion-aware)
+│   ├── measure_runtime.py         # Wall-clock runtime profiling (hard deletion at inference)
+│   └── figures/                   # Generated PDF figures
+├── tests/
+│   └── test_mrsedd.py             # Unit tests (pytest)
 └── README.md
 ```
 
@@ -208,11 +225,21 @@ Metrics logged during training:
 
 | Metric | Description |
 |---|---|
-| `train/loss` | Combined score entropy + deletion loss |
-| `train/deletion_rate` | Fraction of tokens deleted at σ = 0.5 |
+| `train/loss` | Combined score entropy + deletion + bimodality loss |
+| `train/score_entropy_loss` | Score entropy loss only |
+| `train/gate_loss` | Deletion rate MSE loss |
+| `train/logit_reg_loss` | L2 regularization on gate logits |
+| `train/bimodality_loss` | Penalty for gate logits in undecided zone |
+| `train/deletion_rate` | Fraction of tokens deleted (linear proxy) |
+| `train/gate_mean` | Mean gate output value |
+| `train/gate_std` | Std of gate output (bimodality indicator) |
+| `train/deletion_loss_weight` | Current deletion loss weight (if PI controller active) |
 | `train/learning_rate` | Current LR (after warmup) |
 | `eval/loss` | Eval score entropy loss |
 | `eval/generative_perplexity` | GPT2-Large perplexity on generated samples |
+| `efficiency/time_per_forward_ms` | Forward pass wall-clock time |
+| `efficiency/avg_sequence_length` | Effective sequence length after deletion |
+| `efficiency/speedup_vs_baseline` | Theoretical attention speedup |
 | `samples` | W&B Table of generated text (at snapshot intervals) |
 | `model/n_parameters` | Total parameter count |
 
@@ -245,18 +272,22 @@ python mrdiffusion-sedd/train_mrdiffusion.py \
     --wandb_run_name sedd-baseline
 ```
 
-### MrSEDD — Soft deletion (default)
+### MrSEDD — Soft deletion (recommended config)
 
 ```bash
 python mrdiffusion-sedd/train_mrdiffusion.py \
     --delete_gate_layer 3 \
     --deletion_type scaled_sigmoid \
     --deletion_mode soft \
-    --target_deletion_rate 0.3 \
-    --deletion_loss_weight 0.1 \
-    --output_dir ./mrdiffusion_soft_30pct \
+    --gate_sigma_conditioned \
+    --stop_gate_grad \
+    --deletion_loss_weight 1.0 \
+    --gate_bimodality_weight 0.01 \
+    --gate_init_bias 0.0 \
+    --pretrained_from louaaron/sedd-small \
+    --output_dir ./mrdiffusion_soft \
     --wandb_project mrdiffusion-sedd \
-    --wandb_run_name mrsedd-soft-layer3-30pct
+    --wandb_run_name mrsedd-soft-layer3
 ```
 
 ### MrSEDD — Sigma-conditioned gate
@@ -347,16 +378,18 @@ modal run --detach mrdiffusion-sedd/train_modal_mrdiffusion.py::main \
     --max-steps 500000
 ```
 
-### MrSEDD — Soft deletion
+### MrSEDD — Soft deletion (recommended)
 
 ```bash
 modal run --detach mrdiffusion-sedd/train_modal_mrdiffusion.py::main \
     --deletion-type scaled_sigmoid \
     --deletion-mode soft \
-    --target-deletion-rate 0.3 \
+    --gate-sigma-conditioned \
+    --stop-gate-grad \
+    --deletion-loss-weight 1.0 \
+    --pretrained-from louaaron/sedd-small \
     --max-steps 500000 \
-    --wandb-project mrdiffusion-sedd \
-    --wandb-run-name mrsedd-soft-layer3-30pct
+    --wandb-run-name mrsedd-soft-layer3
 ```
 
 ### MrSEDD — Hard deletion
@@ -412,15 +445,95 @@ modal volume ls mrdiffusion-sedd-checkpoints
 
 ## Evaluation
 
-MrSEDD is evaluated identically to SEDD: generate sequences (Euler predictor, 128 steps) and measure perplexity with a frozen GPT2-Large model.
+### Generative Perplexity (during training)
 
-Generative perplexity is logged automatically to W&B at every snapshot. To run a standalone evaluation on a saved checkpoint, use the original SEDD sampling infrastructure:
+Generative perplexity is logged automatically to W&B at every snapshot. Uses GPT2-Large to score generated samples.
+
+### Evaluation Scripts (`evaluation/`)
 
 ```bash
-cd ../diffusion/Score-Entropy-Discrete-Diffusion
-python run_sample.py \
-    --model_path ../../mrdiffusion_soft_30pct/final/checkpoint.pth \
-    --steps 128
+cd mrdiffusion-sedd
+
+# Zero-shot NELBO perplexity on PTB, WikiText-2/103, LM1B, AG News
+python evaluation/eval_zero_shot.py --model_path ./runs/soft/checkpoints/best
+
+# Gate behavior: deletion rate vs sigma, bimodality analysis
+python evaluation/eval_gate_behavior.py --model_path ./runs/soft/checkpoints/best
+
+# Analytical FLOPs + wall-clock profiling (single step)
+python evaluation/eval_flops.py --checkpoint ./runs/soft/final/checkpoint.pth \
+    --deletion_rate 0.3 --profile --deletion_mode hard
+
+# MAUVE score (generated vs reference text distribution)
+python evaluation/eval_mauve.py --model_path ./runs/soft/checkpoints/best
+
+# Pareto frontier: generative perplexity vs total FLOPs at multiple step counts
+python evaluation/eval_pareto.py \
+    --mr_checkpoint ./runs/soft/final/checkpoint.pth \
+    --baseline_checkpoint ./runs/baseline/final/checkpoint.pth
+```
+
+### Analysis Scripts (`analysis/`)
+
+Compute efficiency analysis for hard deletion at inference:
+
+```bash
+# Theoretical MACs across deletion rates, gate layers, and sampling steps
+# (no checkpoint needed — produces publication figures)
+python analysis/compute_savings.py
+
+# With experimental data points
+python analysis/compute_savings.py \
+    --runs "SEDD,95.2,0.0" "MrSEDD-30%,96.1,0.30" "MrSEDD-50%,98.5,0.50"
+
+# Gate layer ablation (perplexity + runtime vs layer)
+python analysis/compute_savings.py \
+    --gate-layer-runs "Layer 1,96.0,8.2,1" "Layer 3,96.5,6.8,3" "Layer 6,97.2,5.5,6"
+```
+
+```bash
+# Wall-clock runtime profiling (requires checkpoint + GPU)
+python analysis/measure_runtime.py \
+    --models "SEDD,./runs/baseline/final/checkpoint.pth" \
+             "MrSEDD-30%,./runs/soft-gate-fixes-v2/final/checkpoint.pth" \
+    --deletion_mode hard
+
+# Full multi-step sampling measurement (128 denoising steps)
+python analysis/measure_runtime.py \
+    --models "SEDD,./runs/baseline/final/checkpoint.pth" \
+             "MrSEDD-30%,./runs/soft-gate-fixes-v2/final/checkpoint.pth" \
+    --deletion_mode hard --measure_sampling --num_steps 128
+```
+
+Output figures are saved to `analysis/figures/`:
+- `macs_relative.pdf` — per-step compute vs deletion ratio
+- `macs_by_gate_layer.pdf` — per-step compute for gate layers 1, 3, 6, 9
+- `macs_multistep.pdf` — total TFLOPs for full sampling at 32/64/128/256/512 steps
+- `macs_sigma_schedule.pdf` — constant vs linear_sigma schedule savings
+- `runtime_comparison.pdf` — wall-clock ms/step bar chart
+- `deletion_rate_vs_sigma.pdf` — gate behavior at inference across noise levels
+
+### Modal Evaluation
+
+```bash
+cd mrdiffusion-sedd
+
+# Zero-shot NELBO
+modal run train_modal_mrdiffusion.py::eval_zero_shot_main --run-name soft-gate-fixes-v2
+
+# MAUVE score
+modal run train_modal_mrdiffusion.py::eval_mauve_main --run-name soft-gate-fixes-v2
+
+# Gate behavior analysis
+modal run train_modal_mrdiffusion.py::eval_gate_behavior_main --run-name soft-gate-fixes-v2
+
+# FLOPs profiling (wall-clock on A100)
+modal run train_modal_mrdiffusion.py::eval_flops_main --run-name soft-gate-fixes-v2 --deletion-mode hard
+
+# Pareto frontier (perplexity vs FLOPs at multiple step counts)
+modal run train_modal_mrdiffusion.py::eval_pareto_main \
+    --mr-run-name soft-gate-fixes-v2 \
+    --baseline-run-name baseline-pretrained-20k-v2
 ```
 
 ---
@@ -429,13 +542,17 @@ python run_sample.py \
 
 | Experiment | Key flags |
 |---|---|
+| **Recommended next run** | `--stop-gate-grad --gate-sigma-conditioned --deletion-loss-weight 1.0 --pretrained-from louaaron/sedd-small` |
 | Ablation: constant vs scheduled deletion rate | `--deletion_rate_schedule constant` vs `linear_sigma` vs `power_sigma` |
 | Ablation: deletion rate (constant schedule) | `--target_deletion_rate 0.1 / 0.3 / 0.5` |
 | Ablation: r_min / r_max (scheduled) | `--r_min 0.0 --r_max 0.3` vs `--r_min 0.05 --r_max 0.5` |
+| Ablation: bimodality loss | `--gate_bimodality_weight 0.0 / 0.01 / 0.05 / 0.1` |
+| Ablation: gate init bias | `--gate_init_bias 0.0` (balanced) vs `--gate_init_bias 2.0` (keep-biased) |
 | Ablation: restore layer | `--restore_gate_layer -1` (output only) vs `6` (mid-network) vs `9` (late) |
 | Ablation: gate layer | `--delete_gate_layer 1 / 3 / 6 / 9` |
 | Ablation: soft vs hard | `--deletion_mode soft` vs `--deletion_mode hard` |
 | Ablation: sigma conditioning | default (`--gate_sigma_conditioned`) vs `--no_gate_sigma_conditioned` |
+| Ablation: stop_gate_grad | `--stop_gate_grad` (gate loss only) vs default (both gradients) |
 | Ablation: gate type | `--deletion_type scaled_sigmoid / random / fixed` |
 | Baseline comparison | `--no_delete_gate` (vanilla SEDD) |
 

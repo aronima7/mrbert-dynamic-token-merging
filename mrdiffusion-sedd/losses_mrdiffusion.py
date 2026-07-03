@@ -99,6 +99,27 @@ def deletion_rate_loss(
 
 
 # ---------------------------------------------------------------------------
+# Bimodality loss — penalizes gate logits in the undecided zone
+# ---------------------------------------------------------------------------
+
+def bimodality_loss(
+    gate_logits: torch.Tensor,
+    margin: float = 2.0,
+) -> torch.Tensor:
+    """
+    Penalizes gate logits that fall in the undecided zone [-margin, margin].
+
+    Encourages a clean bimodal split: logits should be clearly positive (delete)
+    or clearly negative (keep), not hovering near 0 where sigmoid is ~0.5.
+
+    Uses a soft hinge: penalty = max(0, margin - |logit|)^2, averaged over all tokens.
+    """
+    abs_logits = gate_logits.abs()
+    penalty = F.relu(margin - abs_logits).pow(2)
+    return penalty.mean()
+
+
+# ---------------------------------------------------------------------------
 # Combined loss function
 # ---------------------------------------------------------------------------
 
@@ -160,6 +181,12 @@ def get_loss_fn(
             logit_reg = gate_logit_reg_weight * gate_logits_out.pow(2).mean()
             total_loss = total_loss + logit_reg
 
+        # Bimodality loss: penalizes logits in the undecided zone [-2, 2]
+        gate_bimodality_weight = getattr(mr_config, "gate_bimodality_weight", 0.0)
+        if gate_logits_out is not None and gate_bimodality_weight > 0.0:
+            bimod_loss = gate_bimodality_weight * bimodality_loss(gate_logits_out)
+            total_loss = total_loss + bimod_loss
+
         return total_loss
 
     return loss_fn
@@ -216,12 +243,18 @@ def compute_loss_components(
     if gate_logits_out is not None and gate_logit_reg_weight > 0.0:
         logit_reg_val = (gate_logit_reg_weight * gate_logits_out.pow(2).mean()).item()
 
-    total = score_entropy + mr_config.deletion_loss_weight * gate_loss_val + logit_reg_val
+    bimodality_val = 0.0
+    gate_bimodality_weight = getattr(mr_config, "gate_bimodality_weight", 0.0)
+    if gate_logits_out is not None and gate_bimodality_weight > 0.0:
+        bimodality_val = (gate_bimodality_weight * bimodality_loss(gate_logits_out)).item()
+
+    total = score_entropy + mr_config.deletion_loss_weight * gate_loss_val + logit_reg_val + bimodality_val
 
     return {
         "score_entropy_loss": score_entropy,
         "gate_loss": gate_loss_val,
         "logit_reg_loss": logit_reg_val,
+        "bimodality_loss": bimodality_val,
         "total_loss": total,
     }
 

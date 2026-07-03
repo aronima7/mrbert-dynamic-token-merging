@@ -229,4 +229,50 @@ https://wandb.ai/aronima7-stanford-university/mrdiffusion-sedd/runs/bn1wmxmq?nw=
 Run #2
 ---
 https://wandb.ai/aronima7-stanford-university/mrdiffusion-sedd/runs/1i1swmav?nw=nwuseraronima7
+
+Analysis: soft-gate-stopgrad-30pct-20k vs baseline-pretrained-20k-latest   
+                                                                                                                                                                                                           
+  What's Working                                                                                                                                                                                           
+                                                                                                                                                                                                           
+  1. Deletion rate is on-target and stable — train/deletion_rate holds steady at ~0.28–0.32, right at the 30% target. The gate is not collapsing.                                                          
+  2. Gate loss is near zero — train/gate_loss ≈ 0 throughout, confirming the deletion rate regulation mechanism is functioning correctly.                                                                  
+  3. Score entropy loss is competitive — train/score_entropy_loss for the gate model largely overlaps with baseline, meaning the diffusion objective isn't being destroyed by deletion.                    
+  4. Generative perplexity is comparable — The gate model (purple) actually dips below baseline around steps 12k–16k (~83 vs ~88–90), showing the gate model can match or beat baseline quality at times.  
+  5. stop_gate_grad is preventing collapse — Without this, the score entropy gradient would push the gate to keep all tokens. The run name confirms it's active and working.                               
+                                                                                                                                                                                                           
+  ---                                                                                                                                                                                                      
+  What's NOT Working                                                                                                                                                                                       
+                                                                                                                                                                                                           
+  1. Gate discriminativeness is collapsing — train/gate_std drops from ~3.0 to ~1.0 over training. The gate is becoming less bimodal — instead of clear "keep" vs "delete" decisions, it's converging
+  toward uniform soft-masking of all tokens equally. This defeats the purpose of learned deletion.                                                                                                         
+  2. Gate logits are stuck deeply negative — train/gate_mean sits at -4 to -10 throughout. The gate achieves 30% deletion only via a thin right tail, not a clean bimodal split. Most tokens get
+  near-identical "keep" scores.                                                                                                                                                                            
+  3. deletion_loss_weight collapsed to 0 after warmup — The PI controller spiked to ~0.8 early, then drove weight to ~0 by step 5k and stayed there. Once this weight is 0, there's no ongoing gradient
+  signal to maintain or improve gate quality — the gate is coasting on momentum.                                                                                                                           
+  4. Eval loss shows no clear improvement over baseline — Both hover around 3000–5000 with high variance. The gate model isn't meaningfully better despite deleting 30% of tokens, suggesting the gate is
+  deleting randomly rather than selecting uninformative tokens.                                                                                                                                            
+  5. Generative perplexity trending up — After the promising dip at step 14k, it rebounds to ~95+. The model is not consolidating its quality gains.
+  6. logit_reg_loss is flat at 0 — This suggests gate_logit_reg_weight=0, so there's nothing preventing the gate logits from drifting to an unhealthy regime. 
+  ┌────────────────────────────┬────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────┐
+  │          Problem           │                                    Fix                                     │                                        Rationale                                        │
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤
+  │ deletion_loss_weight → 0   │ Replace PI controller with fixed weight = 1.0–2.0, or add a floor:         │ PI is too aggressive; once weight hits 0, gate has no learning signal                   │
+  │                            │ --pi_min_weight 0.1                                                        │                                                                                         │
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Gate std collapsing        │ Add bimodality loss: penalize gate logits in the range [-2, 2] (the        │ Forces the gate toward a clean binary split rather than uniform soft-masking            │
+  │                            │ "undecided" zone), rewarding extreme keep/delete decisions                 │                                                                                         │
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Gate mean too negative     │ Initialize gate bias to 0 (not negative); currently the gate starts biased │ A balanced initialization lets the gate learn to separate tokens from the start         │
+  │                            │  toward "keep all" and never recovers                                      │                                                                                         │
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤
+  │                            │                                                                            │ Delete more at high noise (cheap; tokens are random anyway) and less at low noise       │
+  │ No quality improvement     │ Switch to deletion_rate_schedule=linear_sigma with r_min=0.05, r_max=0.5   │ (expensive; tokens carry real signal). This is where actual FLOPs savings happen        │
+  │                            │                                                                            │ without quality cost                                                                    │
+  ├────────────────────────────┼────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Eval noise / trending up   │ Longer training (50k+ steps) with cosine LR decay, or EMA on model weights │ 20k steps may not be enough for the gate to learn meaningful token importance           │
+  │ perplexity                 │                                                                            │                                                                                         │
+  └────────────────────────────┴────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────┘
 ---
+Run #3 
+---
+modal run train_modal_mrdiffusion.py::main --wandb-run-name soft-gate-fixes-v2 --gate-sigma-conditioned --stop-gate-grad --deletion-loss-weight 1.0 --max-steps 10000 --pretrained-from louaaron/sedd-small

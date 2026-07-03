@@ -151,6 +151,7 @@ def train(
     pretrained_from: str = "",
     # W&B
     wandb_project: str = "mrdiffusion-sedd",
+    wandb_entity: str = "aronima7-stanford-university",
     wandb_run_name: str = "",
     disable_wandb: bool = False,
     # Extras
@@ -230,6 +231,8 @@ def train(
         "--wandb_project", wandb_project,
     ]
 
+    if wandb_entity:
+        cmd.extend(["--wandb_entity", wandb_entity])
     if max_steps > 0:
         cmd.extend(["--max_steps", str(max_steps)])
     if no_delete_gate:
@@ -286,13 +289,20 @@ def main(
     use_gumbel_noise: bool = False,
     deletion_loss_weight: float = 0.1,
     target_deletion_rate: float = 0.3,
+    deletion_rate_schedule: str = "linear_sigma",
+    r_min: float = 0.05,
+    r_max: float = 0.5,
     delete_gate_lr: float = 0.0,
     gate_warmup_steps: int = 0,
     use_pi_controller: bool = False,
+    pi_min_weight: float = 0.1,
     gate_logit_reg_weight: float = 0.001,
+    gate_init_bias: float = 0.0,
+    gate_bimodality_weight: float = 0.01,
     stop_gate_grad: bool = False,
     pretrained_from: str = "",
     wandb_project: str = "mrdiffusion-sedd",
+    wandb_entity: str = "aronima7-stanford-university",
     wandb_run_name: str = "",
     disable_wandb: bool = False,
 ):
@@ -302,13 +312,23 @@ def main(
         extra_args.extend(["--gate_warmup_steps", str(gate_warmup_steps)])
     if use_pi_controller:
         extra_args.append("--use_pi_controller")
+        extra_args.extend(["--pi_min_weight", str(pi_min_weight)])
     if gate_logit_reg_weight != 0.001:
         extra_args.extend(["--gate_logit_reg_weight", str(gate_logit_reg_weight)])
+    if gate_init_bias != 0.0:
+        extra_args.extend(["--gate_init_bias", str(gate_init_bias)])
+    if gate_bimodality_weight != 0.01:
+        extra_args.extend(["--gate_bimodality_weight", str(gate_bimodality_weight)])
+    else:
+        extra_args.extend(["--gate_bimodality_weight", str(gate_bimodality_weight)])
+    if deletion_rate_schedule != "linear_sigma":
+        extra_args.extend(["--deletion_rate_schedule", deletion_rate_schedule])
+    if r_min != 0.05:
+        extra_args.extend(["--r_min", str(r_min)])
+    if r_max != 0.5:
+        extra_args.extend(["--r_max", str(r_max)])
     if stop_gate_grad:
         extra_args.append("--stop_gate_grad")
-        # With stop_gate_grad the gate never influences score entropy, so freezing
-        # the transformer serves no purpose and breaks GradScaler (param group with
-        # all-None grads causes "No inf checks recorded" assertion).
         extra_args.extend(["--freeze_transformer_steps", "0"])
 
     train.remote(
@@ -328,6 +348,7 @@ def main(
         delete_gate_lr=delete_gate_lr,
         pretrained_from=pretrained_from,
         wandb_project=wandb_project,
+        wandb_entity=wandb_entity,
         wandb_run_name=wandb_run_name,
         disable_wandb=disable_wandb,
         extra_args=extra_args or None,

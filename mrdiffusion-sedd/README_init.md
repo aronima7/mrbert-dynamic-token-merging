@@ -141,3 +141,31 @@ paper in diffusion/bd3lm-paper. Write detailed README in the folder capturing ar
 Summary: All implementation gaps from the plan are covered. The one meaningful architectural deviation is TokenRestore using pre-gate states instead of nearest-neighbor interpolation — this is
 intentional and arguably better. The plan's code structure layout differs from what was built, but all the logic is present.
 ---------
+how do I run hard deletion at inference time?                                                                                                                                                            
+                                                
+⏺ Based on the architecture, you have two options:                                                                                                                                                         
+                                                            
+  1. Using the runtime measurement script (benchmarks per-step and full sampling):                                                                                                                         
+                                                                                                                                                                                                           
+  cd mrdiffusion-sedd                                                                                                                                                                                      
+  python analysis/measure_runtime.py \                                                                                                                                                                     
+      --models "SEDD,./runs/baseline/checkpoints/best" \                                                                                                                                                   
+               "MrSEDD-30%,./runs/soft-gate-fixes-v2/checkpoints/best" \                                                                                                                                   
+      --deletion_mode hard                                                                                                                                                                                 
+                                                                                                                                                                                                           
+  2. Using the eval scripts with --deletion_mode hard:                                                                                                                                                     
+                                                                                                                                                                                                           
+  python evaluation/eval_zero_shot.py --model_path ./runs/soft-gate-fixes-v2/checkpoints/best --deletion_mode hard                                                                                         
+  python evaluation/eval_flops.py --model_path ./runs/soft-gate-fixes-v2/checkpoints/best --deletion_mode hard                                                                                             
+                                                                                                                                                                                                           
+  3. Programmatically — set deletion_mode="hard" in the config:                                                                                                                                            
+                                                                                                                                                                                                           
+  from configuration_mrdiffusion import MrDiffusionConfig                                                                                                                                                  
+  from modeling_mrdiffusion import MrSEDD                                                                                                                                                                  
+                                                                                                                                                                                                           
+  mr_config = MrDiffusionConfig(deletion_mode="hard")                                                                                                                                                      
+  model = MrSEDD(sedd_config, mr_config)                                                                                                                                                                   
+                                                                                                                                                                                                           
+  The key distinction: the model can be trained with soft deletion (attention bias — no tokens removed, differentiable) but switched to hard deletion at inference (tokens physically removed after the    
+  gate layer, giving real wall-clock speedup). The gate learns the same scores either way; you just flip the mode for inference.
+---------

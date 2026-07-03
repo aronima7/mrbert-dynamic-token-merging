@@ -112,11 +112,8 @@ class SigmoidDeleteGate(nn.Module):
         if self.has_layer_norm:
             self.layer_norm = LayerNorm(hidden_size)
         self.feed_forward = nn.Linear(hidden_size, 1)
-        # Initialise: positive bias → gate starts near 0 (keep all tokens).
-        # Value 2.0 keeps gate_output ≈ -3.6 (above deletion threshold -15) while
-        # providing ~1000× better gradient flow than bias=10.
         nn.init.normal_(self.feed_forward.weight, mean=0.0, std=0.01)
-        self.feed_forward.bias.data.fill_(2.0)
+        self.feed_forward.bias.data.fill_(mr_config.gate_init_bias)
         self.activation = ScaledSigmoid(mr_config.sigmoid_mask_scale)
         self.use_gumbel_noise = mr_config.use_gumbel_noise
 
@@ -149,7 +146,7 @@ class SigmoidDeleteGateWithSigma(nn.Module):
             self.layer_norm = LayerNorm(hidden_size)
         self.feed_forward = nn.Linear(hidden_size + cond_dim, 1)
         nn.init.normal_(self.feed_forward.weight, mean=0.0, std=0.01)
-        self.feed_forward.bias.data.fill_(2.0)
+        self.feed_forward.bias.data.fill_(mr_config.gate_init_bias)
         self.activation = ScaledSigmoid(mr_config.sigmoid_mask_scale)
         self.use_gumbel_noise = mr_config.use_gumbel_noise
 

@@ -120,6 +120,12 @@ def parse_args():
     p.add_argument("--gate_bottleneck_dim", type=int, default=128)
     p.add_argument("--gate_logit_reg_weight", type=float, default=0.001,
                    help="L2 regularization on gate logits (plan Section 3.4)")
+    p.add_argument("--gate_init_bias", type=float, default=0.0,
+                   help="Gate linear layer bias initialization. 0=balanced start (recommended), "
+                        "positive=biased toward keep. Previous default was 2.0.")
+    p.add_argument("--gate_bimodality_weight", type=float, default=0.01,
+                   help="Weight for bimodality loss that penalizes gate logits in undecided zone [-2,2]. "
+                        "Encourages clean keep/delete separation.")
     p.add_argument("--delete_gate_layer", type=int, default=3,
                    help="DDiTBlock index after which the gate fires.")
     p.add_argument("--restore_gate_layer", type=int, default=-1,
@@ -142,7 +148,7 @@ def parse_args():
                    help="Detach gate output from score-entropy gradient; gate is trained only by gate loss.")
 
     # --- Deletion rate schedule ---
-    p.add_argument("--deletion_rate_schedule", default="constant",
+    p.add_argument("--deletion_rate_schedule", default="linear_sigma",
                    choices=["constant", "linear_sigma", "power_sigma"],
                    help="How the target deletion rate varies with noise level σ. "
                         "'constant' uses --target_deletion_rate for all σ. "
@@ -191,10 +197,15 @@ def parse_args():
                    help="Anneal temperature over this many steps (plan: 50K)")
     p.add_argument("--use_pi_controller", action="store_true", default=False,
                    help="Use PI controller to track target deletion rate")
+    p.add_argument("--pi_min_weight", type=float, default=0.1,
+                   help="Floor for PI controller output — prevents deletion_loss_weight from "
+                        "collapsing to 0 which kills gate learning signal.")
 
     # --- W&B ---
     p.add_argument("--wandb_project", default="mrdiffusion-sedd",
                    help="W&B project name.")
+    p.add_argument("--wandb_entity", default="aronima7-stanford-university",
+                   help="W&B entity (team or username).")
     p.add_argument("--wandb_run_name", default="",
                    help="W&B run name. Auto-generated if empty.")
     p.add_argument("--disable_wandb", action="store_true",
@@ -283,6 +294,7 @@ def init_wandb(args, cfg, mr_config):
 
     run = wandb.init(
         project=args.wandb_project,
+        entity=args.wandb_entity or None,
         name=run_name,
         config=wandb_config,
         resume="allow",
@@ -309,11 +321,13 @@ def wandb_finish():
         pass
 
 
-def _make_pi_controller(target_rate: float, initial_weight: float = 0.0):
+def _make_pi_controller(target_rate: float, initial_weight: float = 0.0, min_weight: float = 0.1):
     """Create an inline PI controller (plan Section 2.5).
 
     initial_weight: seed p_acc so the first output matches the warmup-end weight,
     avoiding the cliff where the controller resets to near-zero on handoff.
+    min_weight: floor for the output — prevents the controller from driving
+    deletion_loss_weight to 0, which kills gate learning signal.
     ki=1e-3 (was 1e-5) so the integral accumulates meaningfully within 20k steps.
     """
     class _PIController:
@@ -321,11 +335,12 @@ def _make_pi_controller(target_rate: float, initial_weight: float = 0.0):
             self.target_rate = target_rate
             self.kp = kp; self.ki = ki; self.gamma = gamma
             self.p_acc = initial_weight; self.i_acc = 0.0
+            self.min_weight = min_weight
         def update(self, actual_rate):
             error = self.target_rate - actual_rate
             self.p_acc = self.gamma * self.p_acc + (1-self.gamma) * self.kp * error
             self.i_acc += self.ki * error
-            return max(0.0, self.p_acc + self.i_acc)
+            return max(self.min_weight, self.p_acc + self.i_acc)
     return _PIController(target_rate)
 
 
@@ -387,6 +402,8 @@ def train(args):
         gate_type=args.gate_type,
         gate_bottleneck_dim=args.gate_bottleneck_dim,
         gate_logit_reg_weight=args.gate_logit_reg_weight,
+        gate_init_bias=args.gate_init_bias,
+        gate_bimodality_weight=args.gate_bimodality_weight,
         sigmoid_mask_scale=args.sigmoid_mask_scale,
         deletion_threshold=args.deletion_threshold,
         gate_layer_norm=args.gate_layer_norm,
@@ -401,6 +418,7 @@ def train(args):
         deletion_rate_alpha=args.deletion_rate_alpha,
         sigma_max=args.sigma_max,
         deletion_loss_weight=args.deletion_loss_weight,
+        pi_min_weight=args.pi_min_weight,
         rope_original_positions=args.rope_original_positions,
         random_deletion_probability=args.random_deletion_probability,
         fixed_deletion_amount=args.fixed_deletion_amount,
@@ -518,6 +536,7 @@ def train(args):
         pi_controller = _make_pi_controller(
             mr_config.target_deletion_rate,
             initial_weight=args.deletion_loss_weight,
+            min_weight=args.pi_min_weight,
         )
 
     # Sampling function for generation evals
@@ -589,6 +608,7 @@ def train(args):
                 score_entropy_loss = loss.item()
                 gate_loss_val = 0.0
                 logit_reg_loss = 0.0
+                bimodality_loss_val = 0.0
                 time_per_forward_ms = 0.0
                 avg_sequence_length = float(cfg.model.length)
 
@@ -639,6 +659,7 @@ def train(args):
                     score_entropy_loss = components["score_entropy_loss"]
                     gate_loss_val = components["gate_loss"]
                     logit_reg_loss = components["logit_reg_loss"]
+                    bimodality_loss_val = components.get("bimodality_loss", 0.0)
 
                 # Theoretical attention speedup: compressed-phase blocks see (1-r)²
                 # fraction of attention cost; full-sequence blocks are unchanged.
@@ -675,6 +696,7 @@ def train(args):
                     metrics.update({
                         "train/gate_loss": gate_loss_val,
                         "train/logit_reg_loss": logit_reg_loss,
+                        "train/bimodality_loss": bimodality_loss_val,
                         "train/deletion_rate": deletion_rate,
                         "train/gate_mean": gate_mean,
                         "train/gate_std": gate_std,
