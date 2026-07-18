@@ -48,6 +48,7 @@ SST-2 drops by only 0.62pp (97.29\%$\to$96.67\%), while MRPC shows a larger 15.0
 TyDi~QA span EM recovers from 0.15 (no blending) to 0.39 (layer~9 + blending), nearly matching BERT baseline (0.40).
 A random-deletion baseline scores 2.95pp below MrBERT-30\% on SNLI, confirming learned token selection.
 Beyond efficiency, the gate acts as an \emph{attention-sparsifying regulariser}, preferentially pruning punctuation and low-information tokens while preserving content-bearing subwords.
+Our code is available at \url{https://anonymous.4open.science/r/dynamic-token-merging-6146}.
 \end{abstract}
 
 
@@ -409,11 +410,11 @@ MrBERT tolerates 30\% subword deletion with only 0.27pp accuracy loss and 1.89$\
 \section{Other Related Work}
 \label{sec:related-work}
 
-\textbf{Efficient transformers.} Sparse attention methods \citep{beltagy2020longformer,zaheer2020bigbird} reduce attention from $O(n^2)$ to $O(n)$. Low-rank approaches \citep{wang2020linformer} and kernel methods \citep{choromanski2021performer} approximate the full attention matrix. Early-exit approaches \citep{xin2020deebert,zhou2020pabee} skip later layers for easy examples. Token pruning methods \citep{ye2021trbert,wang2021spatten,kim2022ltp} learn to drop tokens, often requiring reinforcement learning. Unlike these, our method keeps the network depth fixed but reduces the number of tokens processed in later layers, trained end-to-end with differentiable soft deletion and requiring no architectural changes beyond the gate module.
+\textbf{Efficient transformers.} Sparse attention \citep{beltagy2020longformer,zaheer2020bigbird}, low-rank projections \citep{wang2020linformer}, kernel methods \citep{choromanski2021performer}, and early-exit approaches \citep{xin2020deebert,zhou2020pabee} all reduce transformer cost. Token pruning methods \citep{ye2021trbert,wang2021spatten,kim2022ltp} learn to drop tokens but often require reinforcement learning. Our method keeps network depth fixed, reduces tokens in later layers via differentiable soft deletion, and requires no architectural changes beyond the gate.
 
-\textbf{Token importance and robustness.} \citet{michel2019heads} and \citet{voita2019heads} showed many BERT attention heads are redundant. \citet{clark2019attention} found BERT attention aligns with syntactic structure; function words receive less attention in higher layers, consistent with our gate's deletion patterns (Section~\ref{sec:deletion-patterns}). By removing low-value tokens in later layers, the gate acts as a structured regulariser that may improve classification robustness on redundant tasks (Section~\ref{sec:results-classification}).
+\textbf{Token importance.} \citet{michel2019heads} and \citet{voita2019heads} showed many BERT attention heads are redundant. \citet{clark2019attention} found attention aligns with syntactic structure, with function words receiving less attention in higher layers --- consistent with our gate's deletion patterns (Section~\ref{sec:deletion-patterns}).
 
-\textbf{Summary of differences.} Our work differs from prior token pruning by: (1)~applying dynamic merging to encoder-only architectures; (2)~using a PI controller to stabilise deletion in a discriminative setting; (3)~introducing pre-deletion blending for extractive QA; and (4)~providing multi-task analysis (including cross-lingual QA) to identify where merging helps or hurts.
+\textbf{Summary of differences.} Our work differs from prior token pruning by: (1)~applying dynamic merging to encoder-only architectures; (2)~using a PI controller to stabilise deletion; (3)~introducing pre-deletion blending for extractive QA; and (4)~providing multi-task analysis to identify where merging helps or hurts.
 
 % ══════════════════════════════════════════════════════════
 \section{Conclusion}

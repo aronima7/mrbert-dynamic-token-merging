@@ -1772,3 +1772,32 @@ get the code ready
   make a decision how best to migrate them. 
 
 ---
+>> can you write a one line TL;DR thta I can use for the submission form based on the abstrcat:                                                                    
+
+  Transformer language models apply uniform computation across input tokens, even though tokens vary in informativeness.                                          
+  MrT5 \citep{kallini2024mrt5} addressed this inefficiency in byte-level encoder-decoder models through \emph{Dynamic Token Merging} (DTM), a learned deletion    
+  mechanism that reduces byte-level sequence lengths by up to 60\% with minimal degradation in model quality.                                                     
+  We investigate whether DTM generalises to subword-based Transformer architectures, where tokens correspond to information-dense subwords. To this end, we       
+  introduce \textbf{MrBERT}, which adapts the MrT5 delete gate to the encoder-only BERT-base architecture.                                                        
+  Our gate fires after encoder layer~3 (out of~12), uses a PI controller to hit a target deletion rate~$\delta$, and introduces a novel \emph{pre-deletion        
+  blending} mechanism that makes extractive QA viable under token deletion.                                                                                       
+  Evaluated on four NLU task types --- natural language inference (SNLI), sentiment classification (SST-2, IMDB), paraphrase detection (MRPC), and extractive QA  
+  (SQuAD, TyDi~QA) --- our results show:                                                                                                                          
+  MrBERT at 30\% deletion achieves \textbf{90.21\%} SNLI accuracy (only 0.27pp below baseline) at \textbf{1.89$\times$} A100 inference speedup;                   
+  A random-deletion baseline scores 2.95pp below MrBERT-30\% on SNLI, confirming learned token selection.                                                         
+  Beyond efficiency, the gate acts as an \emph{attention-sparsifying regulariser}, preferentially pruning punctuation and low-information tokens while preserving 
+  content-bearing subwords.                                                                                                                                       
+  Our code is available at \url{https://anonymous.4open.science/r/dynamic-token-merging-6146}.                                                                    
+  
+  My thoughts: we are intelligently deleting tokens so at inference time we get compute efficiency gains - we have adapted the mechanism devised by mrT5 paper    
+  and show that it translates well to Subword-level Transformers by showcasing it on BERT.  
+
+Here's a one-line TL;DR:
+
+  ▎ We adapt MrT5's learned token deletion mechanism to BERT, showing that intelligently pruning 30% of subword tokens at inference yields 1.89× speedup with only
+  ▎ 0.27pp accuracy loss on NLU tasks.
+
+---
+We adapt MrT5's learned token deletion mechanism to BERT, showing that intelligently pruning subword tokens at inference leads to significant speedup with negligible accuracy loss, ie, the mechanism translates well to subword-level transformers.
+
+---
