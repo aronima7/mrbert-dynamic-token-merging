@@ -1,0 +1,4 @@
+dataset,baseline_acc,mrbert_acc,delta_pp,del_rate_pct,avg_seq_len,seq_red_pct,max_seq_length
+SST-2,0.9729,0.9667,-0.62,47.44,6.96,94.6,128
+MRPC,0.8371,0.6871,-15.00,5.68,49.96,61.0,128
+IMDB,0.9397,0.9303,-0.94,43.73,150.75,70.6,512

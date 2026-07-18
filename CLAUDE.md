@@ -4,14 +4,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CS224N project applying the **delete gate mechanism from MrT5** to multiple architectures. After a specified layer, a learned gate assigns each token a deletion score; low-scoring tokens are soft-deleted (large negative attention bias) or hard-deleted (physically removed), reducing compute while preserving quality.
+Research project applying the **delete gate mechanism from MrT5** to multiple architectures. After a specified layer, a learned gate assigns each token a deletion score; low-scoring tokens are soft-deleted (large negative attention bias) or hard-deleted (physically removed), reducing compute while preserving quality.
 
-**Primary current work:** `mrdiffusion-sedd/` — delete gates on SEDD (Score Entropy Discrete Diffusion).  
-**Foundation work:** Root-level MrBERT (delete gates on BERT, encoder-only).
+**Primary current work:** `COLM-Paper-dynamic-token-merging/` — COLM 2026 Workshop on Efficient Reasoning paper submission (MrBERT results only; MrXLMR removed from paper).  
+**Core implementation:** Root-level MrBERT (delete gates on BERT, encoder-only) — the subject of the COLM paper.  
+**Other explorations:** `mrdiffusion-sedd/`, `mrdiffusion-bd3lms/`, `mrxlmr/` (not included in the current paper).
 
 Reference papers:
 - [MrT5: Dynamic Token Merging](https://arxiv.org/abs/2410.20771) (Kallini et al., 2024) — delete gate design
 - [SEDD: Score Entropy Discrete Diffusion](https://arxiv.org/abs/2310.16834) (Lou et al., 2023) — diffusion base
+
+---
+
+## COLM Paper Submission
+
+**Location:** `COLM-Paper-dynamic-token-merging/COLM-submission/colm2026_submission.tex`  
+**Template:** `COLM-Paper-dynamic-token-merging/COLM-template/`  
+**Change log:** `COLM-Paper-dynamic-token-merging/logs.md` — full history of edits, validations, and decisions.
+
+The paper covers MrBERT only (MrXLMR was removed). Page limit: 4–10 pages (main body, excluding references and appendix). Currently at 10 pages.
+
+Key data sources for the paper:
+- `mrbert/analysis/wandb_plots/all_runs_summary.csv` — W&B metrics for all runs (ground truth for tables)
+- `mrbert/analysis/figures/` — generated CSVs and PDFs for tables/figures
+- `util/delta_analysis_results/` — delta-loss correlation analysis outputs
+
+Table/figure generation scripts (in `mrbert/analysis/`):
+- `generate_table3_figure3.py` — SNLI results + efficiency frontier
+- `generate_table4_classification.py` — SST-2, MRPC, IMDB results
+- `generate_table5_tydiqa.py` — TyDi QA results
+- `generate_table5_mrxlmr.py` — MrXLMR results (appendix only)
+- `generate_table7_correlation.py` — deletion-loss correlation table
+- `generate_table8_comparison.py` — MrT5 vs MrBERT comparison
+- `generate_figure4_gate_layer_runtime.py` — runtime vs gate layer bar chart
+- `generate_figure5_tydiqa_ablation.py` — TyDi QA blending ablation
+
+COLM formatting rules: figures/tables at top/bottom of page ([t]), `\includegraphics[width=0.55\linewidth]` for standalone figures, no font below `\small`, captions below figures/tables, `booktabs` for tables.
 
 ---
 
@@ -117,9 +145,9 @@ python evaluation/eval_pareto.py --model_path ./runs/soft/checkpoints/best
 ```bash
 cd mrxlmr
 
-# Training
-python train_mrxlmr.py --output_dir ./runs/smoke --max_steps 50
-modal run train_modal.py
+# Training (scripts live in training/)
+python training/train_mrxlmr.py --output_dir ./runs/smoke --max_steps 50
+modal run training/train_modal.py
 
 # Evaluate
 python eval/eval_mrxlmr.py --model_path ./runs/best
@@ -135,12 +163,14 @@ python eval/eval_mrxlmr.py --model_path ./runs/best
 |-----------|------|
 | `mrdiffusion-sedd/` | **Primary**: delete gates on SEDD |
 | `mrdiffusion-bd3lms/` | Delete gates on BD3-LM (alternate diffusion baseline; full eval suite, tests, GCP+Modal training) |
-| `mrxlmr/` | Delete gates on XLM-R (cross-lingual encoder; SNLI evaluation, Modal training) |
+| `mrxlmr/` | Delete gates on XLM-R (cross-lingual encoder; SNLI evaluation, Modal training). Note: scripts in `training/` and `eval/` subdirs, model in `models/` |
 | `mrbert/` | Delete gates on BERT (encoder-only, foundational; extensive checkpoints and analysis) |
 | `mrt5/` | Original MrT5 reference (T5-based); `models/modeling_mrt5.py` is the delete gate reference |
 | `diffusion/Score-Entropy-Discrete-Diffusion/` | Official SEDD base implementation (imported by mrdiffusion-sedd via sys.path) |
+| `diffusion/bd3lms/` | Official BD3-LM base implementation (imported by mrdiffusion-bd3lms via sys.path) |
+| `COLM-Paper-dynamic-token-merging/` | **Active**: COLM 2026 paper submission (LaTeX paper + figures); see logs.md for full edit history |
 | `util/` | Modal/GCP setup guides |
-| `final-project-report/` | LaTeX/Markdown report with 19 figures |
+| `final-project-report/` | LaTeX/Markdown report with 19 figures (CS224N project report) |
 
 ### MrDiffusion-SEDD Core Files
 
@@ -205,12 +235,12 @@ Output is always full-sequence `[B, L, vocab_size]` — never zero-filled delete
 - `modeling_mrbert.py` — Full implementation; all task heads (MLM, classification, NER, QA, NSP)
 - `modeling_bert.py` — Reference BERT for comparison
 
-Delete gate fires after `delete_gate_layer` (default 3). Auxiliary deletion loss pushes the gate toward `--target_deletion_rate`. Use `--delete_gate_lr` for a separate learning rate on gate parameters.
+Delete gate fires after `delete_gate_layer` (default 3). The gate fires BEFORE layer 3's attention/FFN, so layers 0–2 are pre-gate (full sequence) and layers 3–11 are post-gate (compressed) — 9 post-gate layers total. Auxiliary deletion loss pushes the gate toward `--target_deletion_rate`. Use `--delete_gate_lr` for a separate learning rate on gate parameters.
 
 ### Import Pattern (sys.path injection)
 
 `mrdiffusion-sedd/` and `mrdiffusion-bd3lms/` import from their respective base implementations via runtime `sys.path` insertion (not installed packages). The modeling files resolve a relative `_SEDD_ROOT` / `_BD3LMS_ROOT` path at import time. This means:
-- The base implementation directories (`diffusion/Score-Entropy-Discrete-Diffusion/`) must exist at the expected relative path
+- The base implementation directories (`diffusion/Score-Entropy-Discrete-Diffusion/` and `diffusion/bd3lms/`) must exist at the expected relative path
 - Running scripts from a different working directory may break imports
 - Always `cd` into the subdirectory before running its scripts
 
@@ -253,6 +283,8 @@ Fix: `--rope_original_positions` preserves original indices [0, 2, 5, …]; fall
 | `download_wandb_plots.py` | Downloads W&B training data via GraphQL API |
 | `launch_hard_deletion_runs.py` | Orchestrates batches of hard deletion training runs |
 | `analyze_deletion_correlation.py` | Per-example deletion rate vs. loss correlation analysis |
+| `analyze_delta_correlation.py` | Per-example delta-loss (model − baseline) correlation; used for paper Section 5.5 |
+| `run_delta_analysis_modal.py` | Runs delta correlation analysis on Modal (A100); downloads results to `util/delta_analysis_results/` |
 | `deletion_correlation_analysis.py` | Multi-model deletion analysis for SNLI |
 | `run_comparison.py` | MrBERT vs baseline BERT comparison |
 | `run_baseline.py` | Run baseline BERT training for comparison |

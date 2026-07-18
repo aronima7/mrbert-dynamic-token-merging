@@ -1,264 +1,260 @@
-# MrBERT: BERT with MrT5-Style Delete Gates
+# MrBERT: Dynamic Token Merging for Encoder-Only Transformers
 
-**Author:** Hiva Mohammadzadeh  
-**Course:** CS224N - Natural Language Processing with Deep Learning
+This repository contains the implementation and experiment code for our COLM 2026 paper, which adapts the [MrT5 delete gate](https://arxiv.org/abs/2410.20771) (Kallini et al., 2024) to BERT-base for efficient NLU inference.
 
-This repository contains an implementation of **MrBERT**, which adapts the delete gate mechanism from the [MrT5 paper](https://arxiv.org/pdf/2410.20771) to the BERT architecture. The delete gate learns to selectively remove uninformative tokens during encoding, potentially improving computational efficiency while maintaining (or improving) task performance.
-
----
-
-## Overview
-
-The MrT5 paper introduced a **delete gate** mechanism that learns to remove redundant tokens during encoding. This can:
-- **Reduce computational cost** by processing fewer tokens in later layers
-- **Improve model focus** by removing uninformative tokens like punctuation or filler words
-- **Potentially improve performance** by reducing noise in the representation
-
-MrBERT adapts this idea to the encoder-only BERT architecture, enabling its use for tasks like:
-- Masked Language Modeling (MLM)
-- Text Classification
-- Named Entity Recognition (NER)
-- Question Answering
-- And more...
-
-### Key Features
-
-- ✅ **Soft Deletion**: Masks attention scores (tokens still present, but ignored)
-- ✅ **Hard Deletion**: Physically removes tokens from the sequence
-- ✅ **Multiple Delete Gate Types**: Scaled sigmoid, log sigmoid, random, and fixed
-- ✅ **Configurable Gate Placement**: Place the delete gate at any encoder layer
-- ✅ **Gumbel Noise**: Optional exploration during training
-- ✅ **Deletion Loss**: Auxiliary loss to encourage a target deletion rate
-- ✅ **Full Task Support**: MLM, classification, token classification, QA, etc.
+MrBERT inserts a lightweight learned gate (2,305 parameters) after encoder layer 3 that selectively deletes tokens, achieving **1.89× A100 inference speedup** with only **0.27pp accuracy loss** on SNLI.
 
 ---
 
-## Architecture
-
-```
-Input: [CLS] The quick brown fox [SEP]
-         ↓
-┌──────────────────────────────────────┐
-│         BERT Embedding Layer          │
-└──────────────────────────────────────┘
-         ↓
-┌──────────────────────────────────────┐
-│         Encoder Layer 0               │
-└──────────────────────────────────────┘
-         ↓
-┌──────────────────────────────────────┐
-│         Encoder Layer 1               │
-└──────────────────────────────────────┘
-         ↓
-┌──────────────────────────────────────┐
-│   ★ DELETE GATE (default: Layer 2)   │  ← Learns which tokens to delete
-│   ┌────────────────────────────────┐ │
-│   │ LayerNorm → Linear → Sigmoid   │ │
-│   └────────────────────────────────┘ │
-│   Output: delete_mask per token      │
-└──────────────────────────────────────┘
-         ↓
-   (Soft: mask attention | Hard: remove tokens)
-         ↓
-┌──────────────────────────────────────┐
-│      Encoder Layers 2-11              │
-│      (with delete mask applied)       │
-└──────────────────────────────────────┘
-         ↓
-       Output
-```
-```
-
-- **Soft Deletion**: `delete_gate_value` is added to attention scores (masking effect)
-- **Hard Deletion**: Tokens with `delete_gate_value > threshold` are physically removed
-
----
-
-## Installation
-
-### Prerequisites
-
-- Python 3.8+
-- PyTorch 2.0+
-- Transformers 4.39+
-
-### Setup
+## Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/HivaMohammadzadeh1/CS224N-project.git
-cd CS224N-project
-
-# Create conda environment
 conda create -n mrbert python=3.11 -y
 conda activate mrbert
+pip install modal torch transformers==4.39.1 datasets accelerate tqdm matplotlib "numpy<2" wandb
+python3 -m modal setup  # one-time Modal auth for GPU training
+```
 
-# Install dependencies
-pip install torch transformers datasets accelerate tqdm matplotlib "numpy<2"
+> `transformers==4.39.1` is pinned — the model code depends on internal BERT APIs from this version.
 
-# For the original mrt5 code
-cd mrt5
-pip install -r requirements.txt
-pip install transformers==4.39.1
+---
+
+## Repository Structure
+
+```
+├── mrbert/                          # Core MrBERT implementation
+│   ├── models/
+│   │   ├── modeling_mrbert.py       # MrBERT model (all task heads)
+│   │   ├── configuration_mrbert.py  # MrBertConfig
+│   │   └── modeling_bert.py         # Reference BERT for comparison
+│   ├── training/
+│   │   ├── train_mrbert.py          # Local training (HuggingFace Trainer)
+│   │   ├── train_modal.py           # Modal serverless training (A100)
+│   │   └── pi_controller.py         # PI controller for deletion rate
+│   ├── data/
+│   │   └── preprocess_*.py          # Dataset preprocessing (SNLI, SQuAD, SST-2, MRPC, IMDB, TyDi QA)
+│   ├── eval/
+│   │   └── eval_mrbert.py           # Evaluation script
+│   ├── analysis/                    # Paper figure/table generation + analysis
+│   │   ├── generate_table3_figure3.py
+│   │   ├── generate_table4_classification.py
+│   │   ├── generate_table5_tydiqa.py
+│   │   ├── generate_table7_correlation.py
+│   │   ├── generate_table8_comparison.py
+│   │   ├── generate_figure4_gate_layer_runtime.py
+│   │   ├── generate_figure5_tydiqa_ablation.py
+│   │   ├── measure_runtime.py       # A100 inference benchmarking
+│   │   ├── deletion_pattern_analysis.py
+│   │   ├── get_deletion_patterns.py
+│   │   ├── hard_deletion_curve.py
+│   │   └── figures/                 # Generated CSVs and PDFs
+│   └── test/
+│       └── test_mrbert.py
+├── analyze_delta_correlation.py     # Per-example delta-loss analysis (local)
+├── run_delta_analysis_modal.py      # Delta-loss analysis on Modal (A100)
+├── mrt5/                            # Original MrT5 reference implementation
+├── COLM-Paper-dynamic-token-merging/  # LaTeX paper submission
+└── util/                            # Modal/GCP setup guides
 ```
 
 ---
 
-## Configuration
+## Reproducing Paper Experiments
 
-### MrBertConfig Parameters
+All training runs use Modal (NVIDIA A100). Checkpoints are stored on the `mrbert-checkpoints` Modal volume.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `delete_gate_layer` | int | 2 | Which encoder layer to place the delete gate (0-indexed) |
-| `deletion_type` | str | "scaled_sigmoid" | Type of delete gate: `"scaled_sigmoid"`, `"log_sigmoid"`, `"random"`, `"fixed"` |
-| `sigmoid_mask_scale` | float | -10.0 | Scale for sigmoid activation (more negative = stronger deletion) |
-| `deletion_threshold` | float | None | Threshold for hard deletion. If None, uses soft deletion |
-| `gate_layer_norm` | bool | True | Apply LayerNorm before delete gate |
-| `use_gumbel_noise` | bool | False | Add Gumbel noise during training for exploration |
-| `random_deletion_probability` | float | 0.5 | Deletion probability for random gate type |
-| `fixed_deletion_amount` | float | 0.5 | Deletion fraction for fixed gate type |
-
----
-
-## Training
+### 1. Data preprocessing
 
 ```bash
-# Masked Language Modeling (default)
-python train_mrbert.py \
-    --task mlm \
-    --dataset_name wikitext \
-    --dataset_config wikitext-2-raw-v1 \
-    --output_dir ./mrbert_checkpoints \
-    --num_epochs 3 \
-    --batch_size 16 \
-    --learning_rate 5e-5 \
-    --target_deletion_rate 0.3 \
-    --deletion_loss_weight 0.1
-
-# Sequence Classification (e.g., SST-2)
-python train_mrbert.py \
-    --task sequence_classification \
-    --dataset_name glue \
-    --dataset_config sst2 \
-    --output_dir ./mrbert_sst2 \
-    --num_epochs 3
-
-# Token Classification (e.g., NER)
-python train_mrbert.py \
-    --task token_classification \
-    --dataset_name conll2003 \
-    --output_dir ./mrbert_ner
-
-# Question Answering (e.g., SQuAD)
-python train_mrbert.py \
-    --task question_answering \
-    --dataset_name squad \
-    --output_dir ./mrbert_squad
+cd mrbert
+python data/preprocess_snli.py
+python data/preprocess_sst2.py
+python data/preprocess_mrpc.py
+python data/preprocess_imdb.py
+python data/preprocess_squad.py
+python data/preprocess_tydiqa.py
 ```
 
-### Training Arguments
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--task` | mlm | Task: `mlm`, `sequence_classification`, `token_classification`, `question_answering` |
-| `--model_name` | bert-base-uncased | Base BERT model |
-| `--delete_gate_layer` | 2 | Delete gate placement |
-| `--deletion_type` | scaled_sigmoid | Delete gate type |
-| `--target_deletion_rate` | 0.0 | Target deletion rate (0 = no deletion loss) |
-| `--deletion_loss_weight` | 0.1 | Weight for auxiliary deletion loss |
-| `--delete_gate_lr` | 1e-4 | Learning rate for delete gate (can be higher than base model) |
-| `--num_epochs` | 3 | Number of training epochs |
-| `--batch_size` | 16 | Batch size |
-| `--learning_rate` | 5e-5 | Learning rate |
-| `--max_seq_length` | 128 | Maximum sequence length |
----
-
-## Evaluation
+### 2. Training (Modal, A100)
 
 ```bash
-# Evaluate a trained model
-python eval_mrbert.py --model_path ./mrbert_checkpoints/final
+cd mrbert/training
 
-# Evaluate on fresh MrBERT (no training)
-python eval_mrbert.py --from_pretrained bert-base-uncased
+# BERT baseline (no gate)
+modal run --detach train_modal.py::main \
+    --model-type BERT --max-steps 30000 \
+    --wandb-run-name bert-snli-baseline --wandb-project mrbert-snli
 
-# Specify evaluation dataset
-python eval_mrbert.py \
-    --model_path ./mrbert_checkpoints/final \
-    --dataset_name wikitext \
-    --dataset_config wikitext-2-raw-v1 \
-    --num_samples 1000
+# MrBERT 30% (main result)
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.3 \
+    --wandb-run-name mrbert-snli-30pct --wandb-project mrbert-snli
+
+# MrBERT 50%
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.5 \
+    --wandb-run-name mrbert-snli-50pct --wandb-project mrbert-snli
+
+# MrBERT 70%
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.7 \
+    --wandb-run-name mrbert-snli-70pct --wandb-project mrbert-snli
+
+# Random deletion baseline
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --deletion-type random --target-deletion-rate 0.3 \
+    --wandb-run-name mrbert-snli-random30 --wandb-project mrbert-snli
+
+# No-PI controller ablation
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.3 --no-pi-controller \
+    --wandb-run-name mrbert-snli-nopi --wandb-project mrbert-snli
+
+# Gate layer ablations (layers 1, 6, 9)
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.3 --delete-gate-layer 1 \
+    --wandb-run-name mrbert-snli-layer1 --wandb-project mrbert-snli
+
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.3 --delete-gate-layer 6 \
+    --wandb-run-name mrbert-snli-layer6 --wandb-project mrbert-snli
+
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.3 --delete-gate-layer 9 \
+    --wandb-run-name mrbert-snli-layer9 --wandb-project mrbert-snli
+
+# Hard-deletion training (soft--hard gap experiment)
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --max-steps 30000 \
+    --target-deletion-rate 0.3 --hard-delete-train-prob 0.5 \
+    --wandb-run-name mrbert-snli-30pct-hd --wandb-project mrbert-snli
 ```
 
-### Evaluation Metrics
+**Classification tasks (SST-2, MRPC, IMDB):**
+```bash
+# SST-2 baseline + MrBERT
+modal run --detach train_modal.py::main \
+    --model-type BERT --task sst2 --max-steps 10000 \
+    --wandb-run-name bert-sst2-baseline --wandb-project mrbert-sst2
 
-The evaluation script reports:
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --task sst2 --max-steps 10000 \
+    --target-deletion-rate 0.3 \
+    --wandb-run-name mrbert-sst2-30pct --wandb-project mrbert-sst2
 
-1. **MLM Perplexity**: How well the model predicts masked tokens
-2. **Deletion Rate**: Average fraction of tokens deleted
-3. **Token Analysis**: Which token types are most frequently deleted
-4. **Deletion by Position**: Are early/late tokens deleted more often?
-5. **Comparison with BERT**: MrBERT vs baseline BERT perplexity
-
----
-
-## Supported Tasks
-
-| Model Class | Task | Output |
-|-------------|------|--------|
-| `MrBertModel` | Base model | Hidden states + delete gate outputs |
-| `MrBertForMaskedLM` | Masked Language Modeling | Token predictions |
-| `MrBertForSequenceClassification` | Text Classification | Class logits |
-| `MrBertForTokenClassification` | NER, POS Tagging | Per-token labels |
-| `MrBertForQuestionAnswering` | Extractive QA | Start/end positions |
-| `MrBertForMultipleChoice` | Multiple Choice | Choice logits |
-| `MrBertForNextSentencePrediction` | NSP | Binary classification |
----
-
-## File Structure
-
-```
-CS224N-project/
-├── modeling_mrbert.py        # Main MrBERT model implementation
-├── configuration_mrbert.py   # MrBertConfig class
-├── train_mrbert.py           # Training script for multiple tasks
-├── eval_mrbert.py            # Evaluation script
-├── test_mrbert.py            # Test suite
-├── modeling_bert.py          # Reference BERT implementation
-├── README.md                 # This documentation
-│
-├── mrbert_checkpoints/       # Saved model checkpoints
-│   └── final/
-│       ├── config.json
-│       ├── model.safetensors
-│       └── tokenizer files...
-│
-└── mrt5/                     # Original MrT5 reference implementation
-    ├── models/
-    │   └── modeling_mrt5.py  # Original T5 with delete gates
-    ├── data/
-    ├── eval/
-    └── training/
+# MRPC and IMDB follow the same pattern with --task mrpc / --task imdb
 ```
 
----
+**TyDi QA (extractive QA with pre-deletion blending):**
+```bash
+# BERT baseline
+modal run --detach train_modal.py::main \
+    --model-type BERT --task tydiqa --max-steps 30000 \
+    --wandb-run-name bert-tydiqa-baseline --wandb-project mrbert-tydiqa
 
-## Testing
+# MrBERT 30% layer 9 + pre-deletion blending (best config)
+modal run --detach train_modal.py::main \
+    --model-type MrBERT --task tydiqa --max-steps 30000 \
+    --target-deletion-rate 0.3 --delete-gate-layer 9 --use-pre-deletion-blend \
+    --wandb-run-name mrbert-tydiqa-30pct-layer9-predel --wandb-project mrbert-tydiqa
+```
 
-Run the test suite to verify the implementation:
+### 3. Download checkpoints
 
 ```bash
-python test_mrbert.py
+# List available checkpoints
+modal volume ls mrbert-checkpoints
+
+# Download a specific checkpoint
+modal volume get mrbert-checkpoints mrbert-snli-30pct/final ./mrbert/local_checkpoints/mrbert-snli-30pct/final
 ```
 
-This runs tests for:
-- ✅ Configuration creation
-- ✅ Delete gate modules (all types)
-- ✅ MrBertModel forward pass (soft deletion)
-- ✅ MrBertModel forward pass (hard deletion)
-- ✅ All task-specific model heads
-- ✅ Gradient flow through delete gate
-- ✅ Comparison with baseline BERT
+### 4. Runtime benchmarking (A100)
+
+Runtime measurements are performed within the Modal training script. Results are saved to:
+- `mrbert/analysis/figures/snli_runtime_table_deletion_percentage.csv`
+- `mrbert/analysis/figures/snli_runtime_table_deletion_gate_layer.csv`
+
+### 5. Delta-loss correlation analysis
+
+```bash
+# Run on Modal (uses checkpoints already on the volume)
+modal run run_delta_analysis_modal.py
+
+# Download results
+modal volume get mrbert-checkpoints delta_analysis ./util/delta_analysis_results
+```
+
+### 6. Deletion pattern analysis
+
+```bash
+cd mrbert
+
+# Extract per-token gate decisions (requires local checkpoint + GPU)
+python analysis/get_deletion_patterns.py \
+    --input_file local_checkpoints/mrbert-snli-30pct/final \
+    --output_dir analysis/deletion_patterns
+
+# Generate figures
+python analysis/deletion_pattern_analysis.py \
+    --input_file analysis/deletion_patterns/mrbert-snli-30pct_test.json \
+    --output_dir analysis/figures
+```
+
+### 7. Generate paper tables and figures
+
+All scripts read from `mrbert/analysis/wandb_plots/all_runs_summary.csv` (W&B export) and/or the runtime CSVs.
+
+```bash
+cd mrbert/analysis
+
+python generate_table3_figure3.py          # Table 3 (SNLI) + Figure 3 (efficiency frontier)
+python generate_table4_classification.py   # Table 4 (SST-2, MRPC, IMDB)
+python generate_table5_tydiqa.py           # Table 5 (TyDi QA)
+python generate_table7_correlation.py      # Table 7 (deletion-loss correlations)
+python generate_table8_comparison.py       # Table 8 (MrT5 vs MrBERT comparison)
+python generate_figure4_gate_layer_runtime.py  # Figure 4 (runtime vs gate layer)
+python generate_figure5_tydiqa_ablation.py     # Figure 5 (TyDi QA blending ablation)
+```
+
 ---
 
+## Key Design Decisions
+
+- **Gate placement**: Layer 3 (3 pre-gate layers process full sequence, 9 post-gate layers process compressed sequence)
+- **Soft training, hard inference**: Soft deletion (attention bias) during training for differentiability; hard deletion (physical removal) at inference for real speedup
+- **PI controller**: Dynamically adjusts deletion loss weight to hit the target deletion rate; without it, the gate runs away to ~89% deletion
+- **Pre-deletion blending**: Blends pre-gate and post-gate representations for deleted positions; critical for extractive QA where answer tokens must not be corrupted
+- **Gate initialization**: Bias = 10.0 ensures near-zero initial deletion (model starts from pretrained baseline)
+
+---
+
+## Tests
+
+```bash
+cd mrbert
+python test/test_mrbert.py
+```
+
+---
+
+## Citation
+
+If you use this code, please cite:
+
+```bibtex
+@inproceedings{mrbert2026,
+  title     = {Who Needs Every Token? Adapting Dynamic Token Merging to Subword-level Transformers},
+  author    = {Anonymous},
+  booktitle = {COLM 2026 Workshop on Efficient Reasoning},
+  year      = {2026}
+}
+```

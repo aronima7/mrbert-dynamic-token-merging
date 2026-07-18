@@ -53,3 +53,8 @@ mrxlmr/test_tydiqa_mrxlmr/*
 mrxlmr/xlmr_snli_test/*
 mrxlmr/xnli_datasets/*
 mrxlmr/test_xnli_mrxlmr/*
+
+# W&B run metadata (may contain API keys)
+**/wandb_plots/plus-training/
+**/meta.json
+**/wandb-metadata.json

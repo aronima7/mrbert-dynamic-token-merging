@@ -1,0 +1,172 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+
+% ── Colors & Hyperref ─────────────────────────────────────
+\definecolor{linkcolor}{HTML}{0000EE}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=linkcolor,
+    urlcolor=linkcolor,
+    citecolor=linkcolor,
+    pdftitle={CS224N: Project Milestone Instructions},
+}
+
+% ── Section formatting ────────────────────────────────────
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+
+% ══════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Title ─────────────────────────────────────────────────
+\begin{center}
+    {\LARGE \textbf{CS224N: Project Milestone Instructions}}\\[0.5em]
+    Last updated on February 17, 2026
+\end{center}
+
+\bigskip
+
+Each team hands in one project milestone, not exceeding two pages in length (excluding figures and references), which is worth 6\% of your overall grade. Milestones that include significantly more than two pages of written, non-reference content will be penalized. The milestone should ensure you make progress on your project, practice your technical writing skills, and receive feedback on both.
+
+This document specifies what information we expect you to include in your milestone. It applies to both default and custom projects. We provide a milestone template:
+
+\begin{center}
+    \url{https://www.overleaf.com/read/rbnvssxgfjwf#804ade}
+\end{center}
+
+In addition, we encourage you to take a look at sample reports from last year. Note that unlike the previous year, we restrict the maximum page limit to be two pages this year.
+
+\begin{center}
+    \url{https://drive.google.com/open?id=18Lt8cBaCE9g7HpqhjPINL26Y78Ek3i2U}\\[0.3em]
+    \url{https://drive.google.com/open?id=1sfkHtKyvrdtA5OnKDx_wgvCNHMdeBy5G}
+\end{center}
+
+
+% ══════════════════════════════════════════════════════════
+\section{Milestone contents (max 2 pages)}
+
+Your final report will be written in the same style as a research paper (though obviously much shorter than most research papers). For the milestone, we ask you to write a preliminary version of sections of your final report. Producing a high-quality milestone is time well-spent, because it will make it easier for you to write your final report. You may find that you can reuse parts of your project proposal in your milestone. This is fine, although you should make sure to incorporate any feedback you received on your proposal.
+
+Your milestone must be a PDF file created using the provided template above. It should be written in a way that a fellow CS224N student can understand by assuming knowledge already taught in class. Note that this means technical terminology you've picked up while learning topics specific to your project should be concisely defined, but you don't need to explain material covered in class or the default project handouts (e.g.\ what Sonnet is). Your milestone can be maximum 2 pages (excluding figures and references); note that this means each section must be concise! As we use the milestone to assess progress, we encourage you to spend less space re-introducing your approach and \textbf{more space on what you've accomplished and what new plans you've made} since the original proposal. Your milestone must contain the following sections:
+
+\subsection*{Key information}
+
+Your PDF milestone should have the following information:
+
+\begin{itemize}[nosep]
+    \item \textbf{Title}: The title of your project (you can change this later).
+    \item \textbf{Team member names}: List the names and \texttt{@stanford.edu} email addresses of all of your team members.
+    \item \textbf{Custom or Default Project}: Indicate which you are doing.
+    \item \textbf{Sharing Project}: If you are sharing this project between CS224n and another class, you must indicate it in the milestone. Otherwise, you can leave this part out.
+    \item \textbf{TA Mentor}: This is the TA that graded your proposal.
+    \item \textbf{(Optional) External Mentor}: If you are doing one of the projects proposed by Stanford AI Lab and community members, write their name(s).
+    \item \textbf{(Optional) External Collaborators}: If you have any collaborators who are not CS224n students, list them.
+\end{itemize}
+
+\subsection*{Abstract}
+
+Your abstract should motivate the problem, describe your goals, and highlight your main findings. Given that your project is still in progress, it is okay if your findings are what you are still working on. Writing an abstract is very difficult, as it should be concise, high-level, and convincing. Keep it to a few sentences!
+
+\subsection*{Approach}
+
+This section details your approach to the problem. For example, this is where you describe the architecture of your models, methods, or algorithms.
+
+\begin{itemize}[nosep]
+    \item Please be specific when describing your main approaches. You may want to include key equations and figures (though it is fine if you want to defer creating time-consuming figures until the final report).
+    \item Describe your baselines. Depending on space constraints and how standard your baseline is, you might do this in detail or simply refer to other papers for details. Default project teams can do the latter when describing the provided baseline model.
+    \item If any part of your approach is original, make it clear. For models and techniques that are not yours, provide references.
+    \item If you are using any code that you did not write yourself, make it clear and provide a reference or link. When describing something you coded yourself, make it clear.
+\end{itemize}
+
+\subsection*{Experiments}
+
+This section is expected to contain the following.
+
+\begin{itemize}[nosep]
+    \item \textbf{Data}: Describe the dataset(s) you are using along with references. Make sure the task associated with the dataset is clearly described.
+    \item \textbf{Evaluation method}: Describe the evaluation metric(s) you used, plus any other details necessary to understand your evaluation.
+    \item \textbf{Experimental details}: Please explain how you ran your experiments (e.g.\ model configurations, learning rate, training time, etc.). This should concisely provide technical details, not a narrative.
+    \item \textbf{Results}: Report the quantitative results that you have so far. Use a table or plot to compare multiple results and compare against your baselines.
+    \begin{itemize}[nosep]
+        \item If you are a default project team, this means you should \textbf{make at least one submission to the dev leaderboard} for paraphrase detection and report the accuracy.
+        \item Comment on your quantitative results. Are they what you expected? Better than you expected? Worse than you expected? Why do you think that is? What does this tell you about what you should do next? Including training curves might be useful to discuss whether things are training effectively.
+        \item You do not need to report any qualitative results in the milestone, though you can if you want.
+    \end{itemize}
+\end{itemize}
+
+\subsection*{Future work}
+
+Describe what you plan to do for the rest of the project and why. You can include stretch goals if you like.
+
+\subsection*{References}
+
+Your references section should be produced using Bib\TeX.
+
+
+% ══════════════════════════════════════════════════════════
+\section{Grading and feedback}
+
+Your milestone will be graded on the following criteria.
+
+\begin{itemize}[nosep]
+    \item \textbf{Progress}: Has the team made good progress on the project? You should have done approximately half of the work of your project.
+    \begin{itemize}[nosep]
+        \item For default projects, you should have implemented a significant part of your final model(s). As a minimum, you should have obtained dev leaderboard scores that improve on the provided baseline.
+        \item For custom projects, your milestone should show that you have setup your data, baseline model, and evaluation metric as well as have run experiments to obtain preliminary results (assuming you are doing a typical model-building project). However, for many projects, `good progress' depends on various factors (e.g.\ whether your model is implemented from scratch or based on an existing codebase), and you should discuss with your mentor what a reasonable target is.
+    \end{itemize}
+    \item \textbf{Understanding}: Does the milestone show a strong understanding of its problem, tasks, methods, metrics, and research context?
+    \item \textbf{Writing quality}: Does the milestone clearly communicate what you've done and why, providing the requested information, to an appropriate level of detail (given the page limit)?
+\end{itemize}
+
+You will receive brief feedback on your milestone. Feedback may contain:
+
+\begin{itemize}[nosep]
+    \item Warnings about your progress (e.g.\ whether your plans are too ambitious or not concrete enough).
+    \item Suggestions for your project (e.g.\ regarding particular methods or related work for reference).
+    \item Feedback on your technical writing (e.g.\ adjustments to clarity, level of detail, formatting, use of references, etc.).
+\end{itemize}
+
+Your milestone will be graded by your mentor. If you have an external mentor, it will be graded by the same CS224N staff member who graded your proposal (you are highly encouraged to ask your external mentor for feedback on your milestone).
+
+
+% ══════════════════════════════════════════════════════════
+\section{Tips for technical writing}
+
+Technical writing is an important skill in this class, in research, and beyond. It's well worth spending time developing your ability to communicate technical concepts clearly. Here are some resources which might help you improve your technical writing:
+
+\begin{itemize}[nosep]
+    \item \textit{Tips for Writing Technical Papers}, Jennifer Widom.\\
+    \url{https://cs.stanford.edu/people/widom/paper-writing.html}
+    \item \textit{Write the Paper First}, Jason Eisner.\\
+    \url{https://www.cs.jhu.edu/~jason/advice/write-the-paper-first.html}
+    \item \textit{Writing in the Sciences}, Coursera course.\\
+    \url{https://online.stanford.edu/courses/som-y0010-writing-sciences}
+    \item The Hume Center for Writing and Speaking offers drop-in and appointment-based sessions to get help from a writing tutor.\footnote{\url{https://undergrad.stanford.edu/tutoring-support/hume-center/see-tutor/what-expect/faq-students}}
+    \item Stanford Engineering's Technical Communication Program provides courses and individual consulting.\footnote{\url{https://engineering.stanford.edu/students-academics/technical-communication-program}}\textsuperscript{,}\footnote{Writing tips: \url{https://stanford.edu/class/ee267/WIM/TechWritingTips.pdf}}
+\end{itemize}
+
+Here are some other things you can do to improve your technical writing:
+
+\begin{itemize}[nosep]
+    \item Look carefully at several NLP papers to understand their typical structure, writing style, and the usual content of the different sections. Model your writing on these examples.
+    \item Revisit the NLP papers you've read (for example, the one you summarized for your proposal). Which parts did you find easy or difficult to understand and why? Can you identify any good writing practices that you could use in your technical writing?
+    \item Ask a friend to read through your writing and tell you if it is clear. This can be useful even if the friend does not have the relevant technical knowledge.
+    \item As always, TAs are happy to discuss best practices of technical writing. You can bring a draft of your project milestone to get feedback on. Specifically, we encourage you to ask TAs to give feedback on the clarity, structure, and style of your writing.
+\end{itemize}
+
+
+% ══════════════════════════════════════════════════════════
+\section{Submission instructions}
+
+Submit your PDF on Gradescope. Make sure to tag all of your team members---only tagged team members will receive credit.
+
+\end{document}

@@ -1,0 +1,6 @@
+label,span_em,start_acc,end_acc,layer,blend,del_rate_pct,test_span_em,test_start_acc,test_end_acc
+BERT baseline,0.4004,0.5324,0.5011,---,---,0.00,0.3982,0.5324,0.5034
+MrBERT 30% (no blend),0.1454,0.3065,0.2528,3,No,60.68,0.1454,0.3065,0.2528
+"MrBERT 30% (blend, L3)",0.3870,0.5213,0.4787,3,Yes,0.00,0.3870,0.5213,0.4787
+"MrBERT 30% (blend, L9)",0.3870,0.5302,0.4944,9,Yes,24.73,0.3915,0.5347,0.4944
+"MrBERT 0% (no deletion, blend)",0.3893,0.5280,0.4855,3,Yes,0.00,0.3870,0.5235,0.4855

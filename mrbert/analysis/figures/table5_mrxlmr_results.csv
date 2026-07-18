@@ -1,0 +1,5 @@
+label,accuracy,delta_pp,del_rate_pct,avg_seq_len
+XLM-R baseline,0.8985,,0.00,
+MrXLMR 0% (sanity),0.8239,-7.46,85.10,4.69
+MrXLMR 30%,0.8227,-7.58,72.01,8.84
+"MrXLMR 30% (L8, frozen embeddings)",0.8986,0.01,50.26,15.74

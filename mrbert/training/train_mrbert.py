@@ -351,7 +351,7 @@ def prepare_mlm_dataset(args, tokenizer):
     if args.dataset_name == "local_mc4":
         # Local mC4 dataset pre-processed into tokenized chunks
         print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir}")
-        from mc4_dataset import load_mc4_dataset
+        from mrt5.mc4_dataset import load_mc4_dataset
 
         train_dataset = load_mc4_dataset(
             split="train", tokenizer=tokenizer,

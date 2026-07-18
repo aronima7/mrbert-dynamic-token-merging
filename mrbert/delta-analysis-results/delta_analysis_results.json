@@ -1,0 +1,46 @@
+{
+  "config": {
+    "baseline_path": "/checkpoints/bert-snli-baseline/final",
+    "mrbert_path": "/checkpoints/mrbert-snli-30pct/final",
+    "random_path": "/checkpoints/mrbert-snli-random30/final",
+    "dataset": "snli",
+    "dataset_config": null,
+    "split": "validation",
+    "max_samples": 1000,
+    "n_examples": 1000
+  },
+  "mrbert_learned": {
+    "correlation": {
+      "pearson": -0.017605504332202194,
+      "pearson_p": 0.5781549987379838,
+      "spearman": -0.01866693377955992,
+      "spearman_p": 0.5554498997434146,
+      "n": 1000
+    },
+    "deletion_rate_mean": 0.3002120411344722,
+    "deletion_rate_std": 0.07448741667174277,
+    "delta_loss_mean": 0.07487687089605606,
+    "delta_loss_std": 0.7418504847075669,
+    "pct_worse_than_baseline": 0.628
+  },
+  "random_baseline": {
+    "correlation": {
+      "pearson": -0.00883261322583221,
+      "pearson_p": 0.7802694932845627,
+      "spearman": 0.012043380482534395,
+      "spearman_p": 0.7036614327178489,
+      "n": 1000
+    },
+    "deletion_rate_mean": 0.5140345634682192,
+    "deletion_rate_std": 0.11676194427851552,
+    "delta_loss_mean": 0.05681312352232635,
+    "delta_loss_std": 0.7945071315881,
+    "pct_worse_than_baseline": 0.745
+  },
+  "comparison_to_mrt5": {
+    "mrt5_learned_r": 0.103,
+    "mrt5_random_r": 0.295,
+    "mrbert_learned_r": -0.017605504332202194,
+    "mrbert_random_r": -0.00883261322583221
+  }
+}

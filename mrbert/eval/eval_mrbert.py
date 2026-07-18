@@ -178,7 +178,7 @@ def prepare_dataset(args, tokenizer):
     # Handle local mC4 dataset
     if args.dataset_name == "local_mc4":
         print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir} ({args.split})")
-        from mc4_dataset import load_mc4_dataset
+        from mrt5.mc4_dataset import load_mc4_dataset
         
         dataset = load_mc4_dataset(
             split=args.split,

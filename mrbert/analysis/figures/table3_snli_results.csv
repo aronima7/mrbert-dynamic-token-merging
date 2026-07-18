@@ -1,0 +1,13 @@
+label,accuracy,delta_pp,del_rate_pct,avg_seq_len,ms_per_sample,section
+BERT baseline,0.9048,0.00,0.00,27.5,1.440,main
+MrBERT 0% (sanity),0.9050,0.02,0.00,27.4,0.878,main
+MrBERT 30%,0.9021,-0.27,30.80,19.0,0.763,main
+MrBERT 30% (hard-train),0.9026,-0.22,31.14,18.9,0.757,main
+MrBERT 50%,0.8952,-0.96,52.55,13.0,0.701,main
+MrBERT 70%,0.8825,-2.23,72.43,7.5,0.705,main
+Random gate 30%,0.8726,-3.22,49.64,64.2,1.157,main
+No-PI 30%,0.8647,-4.01,88.98,3.0,,main
+Layer 1,0.9042,-0.06,30.98,18.9,0.568,layer
+Layer 3 (default),0.9021,-0.27,30.80,19.0,0.761,layer
+Layer 6,0.9036,-0.12,33.89,18.1,1.039,layer
+Layer 9,0.9022,-0.26,46.34,14.6,1.324,layer

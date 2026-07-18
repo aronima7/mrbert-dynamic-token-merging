@@ -163,7 +163,7 @@ def load_mlm_dataset(args, tokenizer):
     
     # Handle local mC4 dataset
     if args.dataset_name == "local_mc4":
-        from mc4_dataset import load_mc4_dataset
+        from mrt5.mc4_dataset import load_mc4_dataset
         
         print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir}")
         

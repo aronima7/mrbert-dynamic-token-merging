@@ -1,0 +1,11 @@
+model,delta,dataset,pearson,spearman,interpretation,split,n_examples,checkpoint
+BERT,0.3,MRPC,+0.064,+0.090,Higher del -> higher loss,validation,408,mrbert/test_mrpc_mrbert/final/
+BERT,0.5,MRPC,+0.068,+0.057,Higher del -> higher loss,validation,408,(Modal: mrbert-mrpc-50pct)
+BERT,0.3,SST-2,-0.022,-0.010,Near zero,validation,872,mrbert/test_sst2_mrbert/final/
+BERT,0.5,SST-2,+0.035,+0.015,Weak positive,validation,872,(Modal: mrbert-sst2-50pct)
+BERT,0.3,SNLI,-0.048,+0.060,Mixed,test,2000,mrbert/local_checkpoints/mrbert-snli-30pct/final/
+BERT,No-PI,SNLI,-0.019,-0.016,Near zero,test,2000,(Modal: mrbert-snli-nopi)
+XLM-R,0.3,SST-2,+0.195,+0.211,Higher del -> higher loss,validation,872,(Modal: mrxlmr-sst2-30pct)
+XLM-R,0.3,MRPC,-0.130,-0.208,Del -> lower loss,validation,408,(Modal: mrxlmr-mrpc-30pct)
+XLM-R,0.5,XNLI,-0.046,-0.084,Slight negative,test,2000,(Modal: mrxlmr-xnli-50pct)
+XLM-R,0.5,SNLI,+0.028,+0.012,Near zero,test,2000,mrxlmr/test_snli_mrxlmr/final/

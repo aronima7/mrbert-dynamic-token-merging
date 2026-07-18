@@ -32,10 +32,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../..", "models"))
 sys.path.insert(0, os.path.dirname(__file__))
 
 import argparse
-import math
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from transformers import (
@@ -373,7 +371,7 @@ def prepare_mlm_dataset(args, tokenizer):
     # Check if using local mC4 dataset
     if args.dataset_name == "local_mc4":
         print(f"Loading LOCAL mC4 dataset from: {args.local_mc4_dir}")
-        from mc4_dataset import load_mc4_dataset
+        from mrt5.mc4_dataset import load_mc4_dataset
         
         train_dataset = load_mc4_dataset(
             split="train",
