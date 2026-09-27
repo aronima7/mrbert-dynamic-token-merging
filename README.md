@@ -48,8 +48,8 @@ python3 -m modal setup  # one-time Modal auth for GPU training
 │   │   └── figures/                 # Generated CSVs and PDFs
 │   └── test/
 │       └── test_mrbert.py
-├── util/                            # Modal/GCP setup guides
-└── prepare_anonymous_repo.sh        # Generate anonymized copy for submission
+└── util/                            # Modal/GCP setup guides
+    └── prepare_anonymous_repo.sh    # Generate anonymized copy for submission
 ```
 
 ---
@@ -224,7 +224,7 @@ modal volume get mrbert-checkpoints mrbert-snli-30pct/final \
 
 ### Step 4: Evaluation
 
-Evaluation runs automatically after training when using `--mode training-and-eval` (default on Modal). To evaluate a downloaded checkpoint locally:
+Evaluation runs automatically after training when you pass `--mode training-and-eval` (the Modal default is `training-only`). To evaluate a downloaded checkpoint locally:
 
 ```bash
 cd mrbert
@@ -353,6 +353,7 @@ cd mrbert && python test/test_mrbert.py
 |------|---------|-------------|
 | `--model-type` | `MrBERT` | `MrBERT` (with gate) or `BERT` (baseline) |
 | `--task` | `sequence_classification` | `sequence_classification`, `sst2`, `mrpc`, `imdb`, `tydiqa` |
+| `--mode` | `training-only` | `training-only` or `training-and-eval` (runs eval after training) |
 | `--dataset-name` | auto | `local_snli`, `local_sst2`, `local_mrpc`, `local_imdb`, `local_tydiqa` |
 | `--max-steps` | 20 | Total training steps |
 | `--target-deletion-rate` | 0.3 | Target fraction of tokens to delete |

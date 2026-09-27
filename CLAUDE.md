@@ -131,4 +131,4 @@ The gate learns to keep all tokens. Fixes in order of impact:
 
 ### Anonymization for submission
 
-Run `bash prepare_anonymous_repo.sh` to produce a scrubbed copy at `./anonymous-submission/` suitable for anonymous.4open.science. The script removes personal paths, W&B entity names, emails, and metadata from all files.
+Run `bash util/prepare_anonymous_repo.sh` to produce a scrubbed copy at `./anonymous-submission/` suitable for anonymous.4open.science. The script removes personal paths, W&B entity names, emails, and metadata from all files.
