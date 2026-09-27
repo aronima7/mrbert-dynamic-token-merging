@@ -3,6 +3,7 @@
 .idea
 .history/*
 __pycache__/*
+anonymous-submission/
 mrbert/mrbert_checkpoints/*
 mrbert/wandb/*
 mrbert-alina/*
