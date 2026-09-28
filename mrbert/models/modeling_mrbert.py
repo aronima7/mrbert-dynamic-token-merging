@@ -1,13 +1,28 @@
-# modeling_mrt5.py
-# Author: Hiva Mohammadzadeh
-# Description: This file contains the implementation of the MrBERT model.
-# The code is adapted from HuggingFace's modeling_bert.py. New code sequences
-# are labeled with comments.
+# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
+# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
+# Copyright 2026 Aronima Dass, Alina Tianhui Huang, Hiva Mohammadzadeh.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# modeling_mrbert.py — MrBERT: BERT with an MrT5-style delete gate.
+# Modified from HuggingFace Transformers' modeling_bert.py: adds the delete
+# gate, soft/hard deletion, and pre-deletion blending (changes marked inline).
 """
 MrBERT model - BERT with MrT5-style delete gates.
 
-This implementation adapts the delete gate mechanism from the MrT5 paper
-to the BERT architecture for encoder-only tasks like Masked Language Modeling.
+This implementation adapts the delete gate mechanism from the MrT5 paper to the
+BERT architecture for encoder-only NLU tasks (sequence classification, token
+classification, extractive QA, and masked language modeling).
 """
 
 from dataclasses import dataclass

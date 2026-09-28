@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+# Copyright 2026 Aronima Dass, Alina Tianhui Huang, Hiva Mohammadzadeh.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Fine-tuning script for MrBERT using HuggingFace Trainer.
 
@@ -225,6 +238,11 @@ class MrBertTrainingArguments(TrainingArguments):
             "Set to e.g. 0.5 to mix hard and soft deletion during training — required for "
             "hard deletion to work well at inference time without accuracy degradation."
         )},
+    )
+    reinit_gate_after_load: bool = field(
+        default=False,
+        metadata={"help": "Re-apply the documented gate init (bias=10) after from_pretrained. "
+                          "Off by default to reproduce the COLM 2026 paper, whose runs used bias≈0."},
     )
 
     # ---- W&B ----
@@ -695,14 +713,32 @@ def prepare_question_answering_dataset(args, tokenizer):
 # Model Creation
 # =============================================================================
 
+def _maybe_reinit_gate(model, args):
+    """Optionally re-apply the documented gate init (bias=10) after from_pretrained.
+
+    Off by default: from_pretrained re-initialises the checkpoint-absent gate with
+    BERT's _init_weights (bias≈0), which is the effective init used for all paper runs.
+    """
+    if not args.reinit_gate_after_load:
+        return model
+    model.bert._init_delete_gates()
+    for layer in model.bert.encoder.layer:
+        if layer.has_delete_gate and hasattr(layer.delete_gate, "feed_forward"):
+            b = layer.delete_gate.feed_forward.bias.item()
+            assert abs(b - 10.0) < 1e-6, f"gate bias is {b}, expected 10.0"
+    return model
+
+
 def create_model(args, tokenizer, num_labels=None):
     """
     Instantiate the appropriate model for the given task and model_type.
 
-    MrBERT: loads pretrained BERT weights via from_pretrained, then randomly
-            initialises only the delete gate (bias=10, weight_std=0.001).
-            All other encoder weights are identical to the BERT baseline,
-            making the comparison fair.
+    MrBERT: loads pretrained BERT weights via from_pretrained. The delete gate is
+            absent from the checkpoint, so from_pretrained re-initialises it with
+            BERT's _init_weights (gate bias≈0) — the effective init used for every
+            paper run. Pass --reinit_gate_after_load to instead restore the
+            documented keep-all init (bias=10). All other encoder weights are
+            identical to the BERT baseline, making the comparison fair.
     BERT:   loads pretrained weights from HuggingFace Hub via from_pretrained.
     """
     if args.model_type == "MrBERT":
@@ -717,23 +753,29 @@ def create_model(args, tokenizer, num_labels=None):
             bypass_gate=args.bypass_gate,
             use_pre_deletion_blend=args.use_pre_deletion_blend,
         )
-        # Load pretrained BERT weights; the delete gate is absent from the checkpoint
-        # so it gets randomly initialised by _init_delete_gates() (bias=10, weight_std=0.001).
+        # NOTE: _init_delete_gates() runs in __init__, but from_pretrained() then re-initialises
+        # parameters missing from the checkpoint (the gate) with BERT's _init_weights, which
+        # resets the gate bias to 0. Paper runs used this effective init (gate at threshold).
+        # Pass --reinit_gate_after_load to get the documented bias=10 (keep-all) start.
         # ignore_mismatched_sizes=True suppresses the warning about the gate being new.
         if args.task == "mlm":
-            return MrBertForMaskedLM.from_pretrained(
+            model = MrBertForMaskedLM.from_pretrained(
                 args.model_name, config=config, ignore_mismatched_sizes=True)
+            return _maybe_reinit_gate(model, args)
         elif args.task == "sequence_classification":
             config.num_labels = num_labels
-            return MrBertForSequenceClassification.from_pretrained(
+            model = MrBertForSequenceClassification.from_pretrained(
                 args.model_name, config=config, ignore_mismatched_sizes=True)
+            return _maybe_reinit_gate(model, args)
         elif args.task == "token_classification":
             config.num_labels = num_labels
-            return MrBertForTokenClassification.from_pretrained(
+            model = MrBertForTokenClassification.from_pretrained(
                 args.model_name, config=config, ignore_mismatched_sizes=True)
+            return _maybe_reinit_gate(model, args)
         elif args.task == "question_answering":
-            return MrBertForQuestionAnswering.from_pretrained(
+            model = MrBertForQuestionAnswering.from_pretrained(
                 args.model_name, config=config, ignore_mismatched_sizes=True)
+            return _maybe_reinit_gate(model, args)
 
     elif args.model_type == "BERT":
         # Standard BERT loaded with pretrained weights

@@ -1,3 +1,16 @@
+# Copyright 2026 Aronima Dass, Alina Tianhui Huang, Hiva Mohammadzadeh.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """
 Run MrBERT training on Modal (serverless GPU).
 
@@ -5,17 +18,21 @@ Prerequisites:
   pip install modal
   modal token set  # one-time auth
 
-Quick test (short run):
+Quick test (20-step smoke test — NOT a full run):
   modal run train_modal.py::main
 
+Note: --max-steps overrides --num-epochs. Use -1 to reproduce the paper
+(3 epochs, 51,504 steps on SNLI at batch size 32). The bare command above
+runs a 20-step smoke test.
+
 Train MrBERT on SNLI (with delete gate):
-  modal run --detach train_modal.py::main --model-type MrBERT --max-steps 30000
+  modal run --detach train_modal.py::main --model-type MrBERT --max-steps -1
 
 Train BERT baseline on SNLI (no delete gate):
-  modal run --detach train_modal.py::main --model-type BERT --max-steps 30000
+  modal run --detach train_modal.py::main --model-type BERT --max-steps -1
 
 Train random deletion baseline (same rate, no learned gate):
-  modal run --detach train_modal.py::main --model-type MrBERT --deletion-type random --target-deletion-rate 0.3 --max-steps 30000
+  modal run --detach train_modal.py::main --model-type MrBERT --deletion-type random --target-deletion-rate 0.3 --max-steps -1
 
 Download checkpoints when done:
   modal volume get mrbert-checkpoints checkpoints ./local_mrbert_checkpoints

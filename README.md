@@ -79,45 +79,47 @@ All commands run from `mrbert/training/`.
 
 #### SNLI (Table 3 — main results)
 
+> `--max-steps` overrides `--num-epochs`; use `-1` to reproduce the paper (3 epochs, 51,504 steps on SNLI at batch size 32). Running `modal run train_modal.py::main` with no `--max-steps` runs a 20-step smoke test, not a full run.
+
 ```bash
 # BERT baseline (no gate)
 modal run --detach train_modal.py::main \
-    --model-type BERT --max-steps 30000 \
+    --model-type BERT --max-steps -1 \
     --wandb-run-name bert-snli-baseline --wandb-project mrbert-snli
 
 # MrBERT 30% deletion (main result)
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.3 \
     --wandb-run-name mrbert-snli-30pct --wandb-project mrbert-snli
 
 # MrBERT 50% deletion
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.5 \
     --wandb-run-name mrbert-snli-50pct --wandb-project mrbert-snli
 
 # MrBERT 70% deletion
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.7 \
     --wandb-run-name mrbert-snli-70pct --wandb-project mrbert-snli
 
 # Random deletion baseline (30%)
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --deletion-type random --target-deletion-rate 0.3 \
     --wandb-run-name mrbert-snli-random30 --wandb-project mrbert-snli
 
 # No-PI controller ablation
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.3 --no-pi-controller \
     --wandb-run-name mrbert-snli-nopi --wandb-project mrbert-snli
 
 # MrBERT 0% deletion control (gate present but target=0)
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.0 --bypass-gate \
     --wandb-run-name mrbert-snli-0pct --wandb-project mrbert-snli
 ```
@@ -126,17 +128,17 @@ modal run --detach train_modal.py::main \
 
 ```bash
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.3 --delete-gate-layer 1 \
     --wandb-run-name mrbert-snli-layer1 --wandb-project mrbert-snli
 
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.3 --delete-gate-layer 6 \
     --wandb-run-name mrbert-snli-layer6 --wandb-project mrbert-snli
 
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.3 --delete-gate-layer 9 \
     --wandb-run-name mrbert-snli-layer9 --wandb-project mrbert-snli
 ```
@@ -145,7 +147,7 @@ modal run --detach train_modal.py::main \
 
 ```bash
 modal run --detach train_modal.py::main \
-    --model-type MrBERT --max-steps 30000 \
+    --model-type MrBERT --max-steps -1 \
     --target-deletion-rate 0.3 --hard-delete-train-prob 0.5 \
     --wandb-run-name mrbert-snli-30pct-hd --wandb-project mrbert-snli
 ```
@@ -317,6 +319,8 @@ Outputs go to `mrbert/analysis/figures/` as both CSV (raw data) and PDF (plots).
 
 For quick iteration without Modal/GPU:
 
+> `train_modal.py` is the reference entry point; calling `train_mrbert.py` directly requires `--controller_p 0.01 --controller_i 1e-5` (the paper values, which `train_modal.py`'s `DEFAULT_ARGS` passes automatically — the script's own defaults are 0.5 / 5e-5).
+
 ```bash
 cd mrbert/training
 
@@ -340,8 +344,30 @@ cd mrbert && python test/test_mrbert.py
 - **Soft training, hard inference**: Soft deletion (attention bias) during training preserves differentiability; hard deletion (physical token removal) at inference gives real 1.89× speedup.
 - **PI controller**: Dynamically adjusts deletion loss weight α each step so the observed deletion rate tracks the target rate. Without it, the gate collapses (all tokens deleted) or goes to ~0% deletion.
 - **Pre-deletion blending**: For deleted tokens, uses their pre-gate hidden states instead of corrupted post-deletion representations. Critical for extractive QA where answer tokens may be deleted.
-- **Gate initialization**: Bias = 10.0 ensures near-zero initial deletion, preserving pretrained BERT's accuracy at the start of training.
+- **Gate initialization**: The gate is *constructed* with bias = 10 (keep-all), but `from_pretrained` re-initialises it with BERT's default init (bias ≈ 0), so paper runs actually start with every content token at the deletion threshold. See [Gate initialisation](#gate-initialisation-important-for-reproduction) below.
 - **Regularizer delay**: First N steps (default 1000) train on task loss only before enabling the deletion regularizer — lets the model learn the task before being asked to compress.
+
+---
+
+## Gate initialisation (important for reproduction)
+
+The delete gate is *constructed* with bias b = 10 (gate ≈ 0, keep-all), but
+`from_pretrained` re-initialises parameters absent from the BERT checkpoint —
+including the gate — with BERT's default init, which resets b to 0. All runs
+in the paper therefore start with every content token at the deletion
+threshold (g = −30·σ(0) = −15), with ≈30–42% of non-padding tokens deleted
+at the first logged steps. During the 1,000-step regulariser delay the task
+loss drives deletion toward zero; the PI controller then ramps it to the
+target. See Section 2.1 (footnote) and Appendix D of the paper.
+
+- **To reproduce the paper:** use the default (`--reinit_gate_after_load` off).
+- **To use the documented keep-all start:** pass `--reinit_gate_after_load`.
+  Results with this flag are *not* reported in the paper.
+
+Sanity check: `train/percent_non_pad_deleted_tokens` at the first logged step
+is ≈30–42% by default and ≈0% with the flag. Do not use
+`delete_gate_average` for this check — it includes padding (~78% of positions
+on SNLI) and stays near −24 either way.
 
 ---
 
@@ -365,6 +391,7 @@ cd mrbert && python test/test_mrbert.py
 | `--batch-size` | 32 | Per-device batch size (use 16 for IMDB/TyDi QA) |
 | `--regularizer-delay` | 1000 | Steps before enabling deletion loss |
 | `--bypass-gate` | False | Disable gate entirely (0% control) |
+| `--reinit-gate-after-load` | False | Re-apply documented gate init (bias=10) after load. **Off reproduces the paper** (see [Gate initialisation](#gate-initialisation-important-for-reproduction)). A `train_mrbert.py` flag — on Modal pass it via `--extra-args "--reinit_gate_after_load"`. |
 | `--wandb-run-name` | auto | W&B run name |
 | `--wandb-project` | `mrbert` | W&B project name |
 | `--extra-args` | | Extra args passed to `train_mrbert.py` (e.g. `"--learning_rate 2e-5"`) |
@@ -380,12 +407,18 @@ python test/test_mrbert.py
 
 ---
 
+## License
+
+Apache-2.0 (see [`LICENSE`](LICENSE)). `modeling_bert.py` and `modeling_mrbert.py` are derived from Hugging Face Transformers (Apache-2.0).
+
+---
+
 ## Citation
 
 ```bibtex
 @inproceedings{mrbert2026,
   title     = {Who Needs Every Token? Adapting Dynamic Token Merging to Subword-level Transformers},
-  author    = {Anonymous},
+  author    = {Dass, Aronima and Huang, Alina Tianhui and Mohammadzadeh, Hiva},
   booktitle = {COLM 2026 Workshop on Efficient Reasoning},
   year      = {2026}
 }
